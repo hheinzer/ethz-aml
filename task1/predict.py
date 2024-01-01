@@ -1,5 +1,4 @@
 import numpy as np
-import pandas as pd
 from sklearn import (
     decomposition,
     ensemble,
@@ -12,6 +11,9 @@ from sklearn import (
     svm,
 )
 
+from explore import plot_outliers
+from fcache import fcache
+
 
 def main():
     np.random.seed(42)
@@ -19,7 +21,7 @@ def main():
     X_train, y_train, X_test = load_data()
     print(X_train.shape, y_train.shape, X_test.shape)
 
-    X_train, y_train = remove_outliers(X_train, y_train)
+    X_train, y_train = remove_outliers(X_train, y_train, X_test)
     X_train, X_test = preprocess(X_train, X_test)
     X_train, X_test = select_features(X_train, y_train, X_test)
     print(X_train.shape, y_train.shape, X_test.shape)
@@ -51,26 +53,30 @@ def main():
     create_submission(model, X_train, y_train, X_test)
 
 
+@fcache
 def load_data():
-    X_train = pd.read_csv("data/X_train.csv", index_col="id")
-    y_train = pd.read_csv("data/y_train.csv", index_col="id")
-    X_test = pd.read_csv("data/X_test.csv", index_col="id")
-    y_train = y_train["y"].to_numpy()
+    X_train = np.genfromtxt("data/X_train.csv", delimiter=",", skip_header=1)[:, 1:]
+    y_train = np.genfromtxt("data/y_train.csv", delimiter=",", skip_header=1)[:, 1:]
+    X_test = np.genfromtxt("data/X_test.csv", delimiter=",", skip_header=1)[:, 1:]
+    y_train = y_train.ravel()
     return X_train, y_train, X_test
 
 
-def remove_outliers(X_train, y_test):
+@fcache
+def remove_outliers(X_train, y_test, X_test):
     model = pipeline.make_pipeline(
         preprocessing.RobustScaler(),
         impute.SimpleImputer(strategy="median"),
         decomposition.PCA(n_components=2),
-        ensemble.IsolationForest(contamination=0.05),
+        ensemble.IsolationForest(contamination=0.045),
     )
     pred = model.fit_predict(X_train)
+    plot_outliers(model[:3].transform(X_train), model[:3].transform(X_test), pred)
     X_train, y_test = X_train[pred > 0], y_test[pred > 0]
     return X_train, y_test
 
 
+@fcache
 def preprocess(X_train, X_test):
     model = pipeline.make_pipeline(
         preprocessing.StandardScaler(),
@@ -81,6 +87,7 @@ def preprocess(X_train, X_test):
     return X_train, X_test
 
 
+@fcache
 def select_features(X_train, y_train, X_test):
     model = pipeline.make_pipeline(
         feature_selection.VarianceThreshold(),
@@ -97,7 +104,9 @@ def create_submission(model, X_train, y_train, X_test):
     model.fit(X_train, y_train)
     pred = model.predict(X_test)
     pred = np.vstack((np.arange(X_test.shape[0]), pred)).T
-    np.savetxt("submission.csv", pred, delimiter=",", header="id,y", comments="")
+    np.savetxt(
+        "submission.csv", pred, fmt="%.16g", delimiter=",", header="id,y", comments=""
+    )
 
 
 if __name__ == "__main__":

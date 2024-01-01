@@ -19,7 +19,6 @@ def fcache(func):
         if not os.path.exists("__fcache__"):
             os.mkdir("__fcache__")
 
-        print(f"Executing {func.__name__}...")
         output = func(*args, **kwargs)
 
         with open(fname, "wb") as f:
