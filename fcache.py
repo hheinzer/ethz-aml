@@ -6,18 +6,17 @@ import pickle
 
 def fcache(func):
     def wrapper(*args, **kwargs):
-        hash = inspect.getsource(func).encode()
-        hash += pickle.dumps(args)
-        hash += pickle.dumps(sorted(kwargs))
-        hash = hashlib.sha256(hash).hexdigest()
-        fname = f"__fcache__/{func.__name__}_{hash}.pkl"
+        hash_input = inspect.getsource(func).encode()
+        hash_input += pickle.dumps(args)
+        hash_input += pickle.dumps(sorted(kwargs))
+        hash_value = hashlib.sha256(hash_input).hexdigest()
+        fname = f"__fcache__/{func.__name__}_{hash_value}.pkl"
 
         if os.path.exists(fname):
             with open(fname, "rb") as f:
                 return pickle.load(f)
 
-        if not os.path.exists("__fcache__"):
-            os.mkdir("__fcache__")
+        os.makedirs("__fcache__", exist_ok=True)
 
         output = func(*args, **kwargs)
 
