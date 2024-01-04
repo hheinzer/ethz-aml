@@ -11,6 +11,7 @@ from imblearn import over_sampling, pipeline
 from sklearn import ensemble, model_selection, preprocessing
 from tqdm import tqdm
 
+from explore import plot_ecgs
 from fcache import fcache
 
 
@@ -20,7 +21,10 @@ def main():
     X_train, y_train, X_test = load_data()
     print(X_train.shape, y_train.shape, X_test.shape)
 
-    X_train, X_test = map(extract_features, [X_train, X_test])
+    X_train = extract_features(X_train, inverse=True)
+    y_train = np.hstack((y_train, y_train))
+    X_test = extract_features(X_test, inverse=False)
+    plot_ecgs(X_train, y_train, 10)
     X_train, X_test = map(create_features, [X_train, X_test])
     print(X_train.shape, X_test.shape)
 
@@ -30,7 +34,7 @@ def main():
         ensemble.HistGradientBoostingClassifier(l2_regularization=0.2),
     )
     score = model_selection.cross_val_score(model, X_train, y_train, cv=5, n_jobs=6)
-    print(score.mean(), score.std())  # 0.7930434002321605 0.011642850729758493
+    print(score.mean(), score.std())  # 0.8864563500647777 0.00419090837858958
 
     create_submission(model, X_train, y_train, X_test)
 
@@ -53,9 +57,14 @@ def read_raw_data(fname):
 
 
 @fcache
-def extract_features(X):
+def extract_features(X, inverse=False):
     with mp.Pool(6) as pool:
         Xn = list(tqdm(pool.imap(_extract_features, X), total=len(X)))
+    if inverse:
+        with mp.Pool(6) as pool:
+            Xn += list(
+                tqdm(pool.imap(_extract_features, [-x for x in X]), total=len(X))
+            )
     return Xn
 
 
