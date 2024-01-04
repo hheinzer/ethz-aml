@@ -1,3 +1,7 @@
+import os
+
+os.environ["OMP_NUM_THREADS"] = "1"
+
 import multiprocessing as mp
 
 import neurokit2 as nk
@@ -5,6 +9,7 @@ import numpy as np
 from biosppy.signals import ecg
 from imblearn import over_sampling, pipeline
 from sklearn import ensemble, model_selection, preprocessing
+from tqdm import tqdm
 
 from fcache import fcache
 
@@ -15,7 +20,8 @@ def main():
     X_train, y_train, X_test = load_data()
     print(X_train.shape, y_train.shape, X_test.shape)
 
-    X_train, X_test = map(preprocess, [X_train, X_test])
+    X_train, X_test = map(extract_features, [X_train, X_test])
+    X_train, X_test = map(create_features, [X_train, X_test])
     print(X_train.shape, X_test.shape)
 
     model = pipeline.make_pipeline(
@@ -47,26 +53,22 @@ def read_raw_data(fname):
 
 
 @fcache
-def preprocess(X):
-    X = extract_features(X)
-    X = create_features(X)
-    return X
-
-
-@fcache
 def extract_features(X):
-    Xn = []
-    for x in X:
-        _, clean, rpeaks, _, epochs, _, rate = ecg.ecg(x, 300, show=False)
-        signals, info = nk.ecg_delineate(clean, rpeaks, 300)
-        Xn.append((clean, rpeaks, epochs, rate, signals, info))
+    with mp.Pool(6) as pool:
+        Xn = list(tqdm(pool.imap(_extract_features, X), total=len(X)))
     return Xn
+
+
+def _extract_features(x):
+    _, clean, rpeaks, _, epochs, _, rate = ecg.ecg(x, 300, show=False)
+    signals, info = nk.ecg_delineate(clean, rpeaks, 300)
+    return clean, rpeaks, epochs, rate, signals, info
 
 
 @fcache
 def create_features(X):
     with mp.Pool(6) as pool:
-        Xn = pool.map(_create_features, X)
+        Xn = list(tqdm(pool.imap(_create_features, X), total=len(X)))
     return np.array(Xn)
 
 
