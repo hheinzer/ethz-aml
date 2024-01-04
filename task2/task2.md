@@ -3,6 +3,7 @@
 1. feature extraction
     - use biosppy to extract raw features (cleaned signal, rpeaks, heart beats, hear rate)
     - find S, Q, P, and T points using neurokit
+    - some of the signals are inverted, to combat this we add the inverse of all signals
     - use binned FFT and autocorrelation of full spectrum
     - compute various time intervals between R, S, Q, P, and T points (and their on/offsets)
     - use mean, standard deviation, median, and variance of the features
