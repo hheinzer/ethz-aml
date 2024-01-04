@@ -27,10 +27,6 @@ def main():
     print(X_train.shape, y_train.shape, X_test.shape)
 
     model = pipeline.make_pipeline(
-        # linear_model.LinearRegression(),
-        # svm.SVR(),
-        # ensemble.GradientBoostingRegressor(),
-        # ensemble.ExtraTreesRegressor(),
         ensemble.StackingRegressor(
             estimators=[
                 ("svr", svm.SVR(C=60.0, epsilon=1e-05)),
@@ -38,17 +34,10 @@ def main():
                 ("etr", ensemble.ExtraTreesRegressor()),
             ],
             final_estimator=linear_model.Ridge(),
-        )  # 0.6865593406215309
+        )
     )
-    param_grid = {
-        # "svr__C": np.linspace(10, 100, 10),
-        # "svr__epsilon": np.logspace(-8, -4, 9),
-        # "gradientboostingregressor__learning_rate": np.linspace(0.07, 0.11, 9),
-    }
-    search = model_selection.GridSearchCV(model, param_grid, cv=5, n_jobs=6)
-    search.fit(X_train, y_train)
-    model = search.best_estimator_
-    print(search.best_score_, search.best_params_)
+    score = model_selection.cross_val_score(model, X_train, y_train, cv=5, n_jobs=6)
+    print(score.mean(), score.std())  # 0.6844646263431688 0.02663668357699777
 
     create_submission(model, X_train, y_train, X_test)
 
