@@ -1,13 +1,14 @@
 # Task 2
 
 1. feature extraction
-    - use biosppy to extract raw features
-    - find R, S, Q, P, and T points with manual algorithm
-    - use binned FFT, autocorrelation, and wavelets of full spectrum
-    - use mean, variance, and standard deviation of the features combined
+    - use biosppy to extract raw features (cleaned signal, rpeaks, heart beats, hear rate)
+    - find S, Q, P, and T points using neurokit
+    - use binned FFT and autocorrelation of full spectrum
+    - compute various time intervals between R, S, Q, P, and T points (and their on/offsets)
+    - use mean, standard deviation, median, and variance of the features
 2. preprocessing
-    - because the dataset is imbalanced, we use random over sampling
+    - because the data set is imbalanced, we use random over sampling
     - scale every feature to zero mean and unit variance
 3. training
-    - use GradientBoostingClassifier from sklearn
-    - optimize Hyperparameters with RandomizedGridSearchCV
+    - use HistGradientBoostingClassifier from sklearn
+    - optimize hyper parameters with RandomizedGridSearchCV
