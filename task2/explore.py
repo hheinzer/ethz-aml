@@ -53,10 +53,10 @@ def plot_ecgs(X, y, n):
             ax[0].set_title(f"{idx}: class = {j}")
             plt.savefig(f"ecg_{j}_{i:05}.pdf", bbox_inches="tight")
 
-    merge_frames("ecg")
+    merge_pdfs("ecg")
 
 
-def merge_frames(prefix):
+def merge_pdfs(prefix):
     pdfs = sorted(glob(prefix + "?*.pdf"))
     merger = PdfMerger()
     for pdf in pdfs:
