@@ -2,6 +2,9 @@ import os
 
 os.environ["OMP_NUM_THREADS"] = "1"
 
+import gzip
+import pickle
+
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -10,13 +13,13 @@ import torch.optim as optim
 import torchvision.transforms.v2 as T
 import torchvision.transforms.v2.functional as F
 from sklearn.model_selection import train_test_split
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
+from torchvision.tv_tensors import Image, Mask
 from tqdm import tqdm
 
 from explore import plot_frames
 from fcache import fcache
 from unet import UNet
-from utils import EchoDataset, load_pkl, resize_frame
 
 device = torch.device(
     "cuda"
@@ -35,102 +38,92 @@ def main():
     train, test = load_data()
     # plot_frames("frames/initial", train, test)
 
-    size = 128
-    train = preprocess(train, size)
-    test = preprocess(test, size)
-    # plot_frames("frames/preprocess", train, test)
-
     test = detect_box(train, test)
-    plot_frames("frames/box", None, test)
+    # plot_frames("frames/box", None, test)
 
 
 @fcache
 def load_data():
+    convert_single = lambda x: torch.from_numpy(x).unsqueeze(0).float()
+    convert_mutliple = lambda x: torch.from_numpy(x).unsqueeze(0).moveaxis(3, 0).float()
+
     train = load_pkl("data/train.pkl")
+    for data in train:
+        data["shape"] = data["video"].shape[:2]
+        data["video"] = convert_mutliple(data["video"]) / 255.0
+        data["box"] = convert_single(data["box"])
+        data["label"] = convert_mutliple(data["label"])
+
     test = load_pkl("data/test.pkl")
+    for data in test:
+        data["shape"] = data["video"].shape[:2]
+        data["video"] = convert_mutliple(data["video"]) / 255.0
+
     return train, test
 
 
-@fcache
-def preprocess(dataset, size):
-    for data in tqdm(dataset, "preprocess"):
-        nframes = data["video"].shape[2]
-
-        video = data["video"]
-        video = video.astype(np.float32)
-        video = video / 255.0
-        video = [resize_frame(video[:, :, j], size) for j in range(nframes)]
-        video = np.moveaxis(video, 0, 2)
-        data["video"] = video
-
-        if "box" in data:
-            box = data["box"]
-            box = box.astype(np.float32)
-            box = resize_frame(box, size)
-            data["box"] = box
-
-        if "label" in data:
-            label = data["label"]
-            label = label.astype(np.float32)
-            label = [resize_frame(label[:, :, j], size) for j in range(nframes)]
-            label = np.moveaxis(label, 0, 2)
-            data["label"] = label
-
-    return dataset
+def load_pkl(fname):
+    with gzip.open(fname, "rb") as f:
+        return pickle.load(f)
 
 
 def detect_box(train, test):
     Xa, Ya, Xe, Ye = [], [], [], []
     for data in train:
         if data["dataset"] == "amateur":
-            Xa.append(np.moveaxis(data["video"], 2, 0)[::5])
-            Ya.append(np.repeat(data["box"][np.newaxis, :, :], len(Xa[-1]), axis=0))
+            Xa.append(data["video"][::5])
+            Ya.append(data["box"].unsqueeze(0).expand(Xa[-1].shape))
         else:
-            Xe.append(np.moveaxis(data["video"], 2, 0))
-            Ye.append(np.repeat(data["box"][np.newaxis, :, :], len(Xe[-1]), axis=0))
+            Xe.append(data["video"])
+            Ye.append(data["box"].unsqueeze(0).expand(Xe[-1].shape))
 
-    model = UNet(n_channels=(1, 16, 32, 64, 128), n_classes=1).to(device)
+    size = 128
+    model = UNet((1, 16, 32, 64, 128), 1).to(device)
     opti = optim.Adam(model.parameters(), weight_decay=1e-3)
     loss_fn = nn.BCEWithLogitsLoss()
     trans = T.RandomPerspective(distortion_scale=0.5)
 
-    if os.path.exists("models/box_model.pt"):
+    try:
         model.load_state_dict(torch.load("models/box_model.pt"))
-    else:
+    except:
         os.makedirs("train", exist_ok=True)
         train_model(
-            Xa, Ya, model, opti, loss_fn, trans, 16, 5, "train/box_model_amateur"
+            Xa, Ya, model, opti, loss_fn, trans, size, 16, 5, "train/box_model_amateur"
         )
         train_model(
-            Xe, Ye, model, opti, loss_fn, trans, 16, 5, "train/box_model_expert"
+            Xe, Ye, model, opti, loss_fn, trans, size, 16, 5, "train/box_model_expert"
         )
         os.makedirs("models", exist_ok=True)
         torch.save(model.state_dict(), "models/box_model.pt")
 
-    test = eval_model(test, model, "box")
+    test = eval_model(test, model, size, "box")
 
     box_shape = []
     for data in train:
         if data["dataset"] == "amateur":
             continue
-        bounds = np.argwhere(data["box"] > 0.5)[[0, -1], :]
+        box = preprocess(data["box"], size).squeeze()
+        bounds = torch.argwhere(box > 0.5)[[0, -1], :]
         box_shape.append(bounds[1] - bounds[0])
-    H, W = np.round(np.mean(box_shape, axis=0)).astype(int)
+    H, W = torch.mean(torch.stack(box_shape).float(), dim=0).round().int()
 
     for data in test:
-        box = np.mean(data["box"], axis=2)
-        y, x = np.round(np.mean(np.argwhere(box > 0.5), axis=0)).astype(int)
-        box = np.zeros_like(box, dtype=np.float32)
-        box[y - H // 2 : y + H // 2, x - W // 2 : x + W // 2] = 1.0
-        data["box"] = box
+        box = data["box"].mean(dim=0)
+        _, y, x = torch.argwhere(box > 0.5).float().mean(dim=0).round().int()
+        box = torch.zeros_like(box)
+        box[0, y - H // 2 : y + H // 2, x - W // 2 : x + W // 2] = 1.0
+        data["box"] = postprocess(box, *data["shape"])
 
     return test
 
 
-def train_model(X, Y, model, opti, loss_fn, trans, batch_size, n_epochs, prefix=None):
+def train_model(
+    X, Y, model, opti, loss_fn, trans, size, batch_size, n_epochs, prefix=None
+):
+    X, Y = map(lambda XY: [preprocess(xy.to(device), size).cpu() for xy in XY], (X, Y))
+
     X0, X1, Y0, Y1 = train_test_split(X, Y)
-    X0, X1, Y0, Y1 = map(lambda x: np.concatenate(x), (X0, X1, Y0, Y1))
-    X0, X1, Y0, Y1 = map(lambda x: torch.tensor(x).unsqueeze(1), (X0, X1, Y0, Y1))
+    X0, X1, Y0, Y1 = map(lambda x: torch.cat(x), (X0, X1, Y0, Y1))
 
     loader0 = DataLoader(EchoDataset(X0, Y0, trans), batch_size, shuffle=True)
     loader1 = DataLoader(EchoDataset(X1, Y1), batch_size, shuffle=True)
@@ -174,15 +167,45 @@ def train_model(X, Y, model, opti, loss_fn, trans, batch_size, n_epochs, prefix=
             fig.savefig(f"{prefix}_{epoch + 1:04d}.pdf", bbox_inches="tight")
 
 
-def eval_model(test, model, key):
+def preprocess(x, size):
+    H, W = x.shape[-2:]
+    x = F.pad(x, (0, 0, max(0, H - W), max(0, W - H)))
+    x = F.resize(x, size, antialias=True)
+    return x
+
+
+class EchoDataset(Dataset):
+    def __init__(self, X, Y, transform=None):
+        self.X = X
+        self.Y = Y
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.X)
+
+    def __getitem__(self, idx):
+        if self.transform is not None:
+            return self.transform(Image(self.X[idx]), Mask(self.Y[idx]))
+        return self.X[idx], self.Y[idx]
+
+
+def eval_model(test, model, size, key):
     with torch.no_grad():
         for data in test:
-            X = np.moveaxis(data["video"], 2, 0)
-            X = torch.tensor(X).unsqueeze(1)
-            Y = model(X.to(device))
-            Y = Y.squeeze().cpu().numpy()
-            data[key] = np.moveaxis(Y, 0, 2)
+            X = preprocess(data["video"].to(device), size)
+            data[key] = model(X).cpu()
     return test
+
+
+def postprocess(x, H, W):
+    x = F.resize(x, max(H, W), antialias=True)
+    x = F.crop(x, 0, 0, H, W)
+    return x
+
+
+def save_pkl(fname, data):
+    with gzip.open(fname, "wb") as f:
+        pickle.dump(data, f, 2)
 
 
 if __name__ == "__main__":

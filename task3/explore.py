@@ -1,8 +1,5 @@
-import os
-
-os.environ["OMP_NUM_THREADS"] = "1"
-
 import multiprocessing as mp
+import os
 from glob import glob
 
 import matplotlib.pyplot as plt
@@ -17,6 +14,7 @@ def plot_frames(prefix, train, test):
         if train is not None:
             train = [(prefix + "/train", i, data) for i, data in enumerate(train)]
             list(tqdm(pool.imap(_plot_frames, train), total=len(train)))
+
         if test is not None:
             test = [(prefix + "/test", i, data) for i, data in enumerate(test)]
             list(tqdm(pool.imap(_plot_frames, test), total=len(test)))
@@ -24,19 +22,22 @@ def plot_frames(prefix, train, test):
 
 def _plot_frames(args):
     prefix, i, data = args
-    frames = data["video"]
-    vmin, vmax = frames.min(), frames.max()
-    box = data["box"] if "box" in data else np.zeros_like(frames[:, :, 0])
-    labels = data["label"] if "label" in data else np.zeros_like(frames)
+
+    video = data["video"].squeeze()
+    box = data["box"].squeeze() if "box" in data else np.zeros_like(video[0])
+    labels = data["label"].squeeze() if "label" in data else np.zeros_like(video)
     dataset = f"({data['dataset']})" if "dataset" in data else ""
-    for j in range(frames.shape[2]):
+
+    vmin, vmax = video.min(), video.max()
+    for j, (frame, label) in enumerate(zip(video, labels)):
         fig, ax = plt.subplots(num=1, clear=True)
-        im = ax.imshow(frames[:, :, j], cmap="gray", vmin=vmin, vmax=vmax)
+        im = ax.imshow(frame, cmap="gray", vmin=vmin, vmax=vmax)
         ax.contour(box, levels=[0.5], colors="tab:blue")
-        ax.imshow(np.where(labels[:, :, j], 2, np.nan), cmap="tab10", vmax=9, alpha=0.6)
+        ax.imshow(np.where(label, 2, np.nan), cmap="tab10", vmax=10, alpha=0.6)
         fig.colorbar(im, ax=ax)
-        ax.set_title(f"{dataset} frame: {j + 1:4d}/{frames.shape[2]}")
+        ax.set_title(f"{dataset} frame: {j + 1:4d}/{video.shape[2]}")
         fig.savefig(f"{prefix}_{i:04d}_{j:04d}.pdf", bbox_inches="tight")
+
     merge_pdfs(f"{prefix}_{i:04d}")
 
 
