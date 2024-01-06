@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torchvision.transforms as transforms
 
 
 class DoubleConv(nn.Module):
@@ -8,12 +7,14 @@ class DoubleConv(nn.Module):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.conv1 = nn.Conv2d(in_channels, out_channels, 3)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, 3)
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
+        self.bnorm = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU()
 
     def forward(self, x):
-        return self.relu(self.conv2(self.relu(self.conv1(x))))
+        x = self.relu(self.bnorm(self.conv1(x)))
+        return self.relu(self.bnorm(self.conv2(x)))
 
 
 class Down(nn.Module):
@@ -21,12 +22,11 @@ class Down(nn.Module):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
+        self.pool = nn.MaxPool2d(2)
         self.conv = DoubleConv(in_channels, out_channels)
-        self.pool = nn.MaxPool2d(2, 2)
 
     def forward(self, x):
-        x = self.conv(x)
-        return x, self.pool(x)
+        return self.conv(self.pool(x))
 
 
 class Up(nn.Module):
@@ -34,60 +34,40 @@ class Up(nn.Module):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.upconv = nn.ConvTranspose2d(in_channels, out_channels, 2, 2)
+        self.upconv = nn.ConvTranspose2d(
+            in_channels, out_channels, kernel_size=2, stride=2
+        )
         self.conv = DoubleConv(in_channels, out_channels)
 
-    def forward(self, x, x_skip):
-        x = self.upconv(x)
-        _, _, h, w = x.shape
-        x_skip = transforms.CenterCrop((h, w))(x_skip)
-        x = torch.cat([x, x_skip], dim=1)
+    def forward(self, x1, x2):
+        x1 = self.upconv(x1)
+        x = torch.cat([x2, x1], dim=1)
         return self.conv(x)
 
 
 class UNet(nn.Module):
-    def __init__(self, n_channels, n_classes, size):
+    def __init__(self, n_channels, n_classes):
         super().__init__()
         self.n_channels = n_channels
         self.n_classes = n_classes
+        self.conv1 = DoubleConv(n_channels[0], n_channels[1])
         self.downs = nn.ModuleList(
-            [Down(n_channels[i], n_channels[i + 1]) for i in range(len(n_channels) - 2)]
+            [Down(n_channels[i - 1], n_channels[i]) for i in range(2, len(n_channels))]
         )
-        self.conv1 = DoubleConv(n_channels[-2], n_channels[-1])
         self.ups = nn.ModuleList(
             [
-                Up(n_channels[-(i + 1)], n_channels[-(i + 2)])
-                for i in range(len(n_channels) - 2)
+                Up(n_channels[-i], n_channels[-(i + 1)])
+                for i in range(1, len(n_channels) - 1)
             ]
         )
-        self.conv2 = nn.Conv2d(n_channels[1], n_classes, 1)
-        self.sigmoid = nn.Sigmoid()
-        self.resize = transforms.Resize(size, antialias=True)
+        self.conv2 = nn.Conv2d(n_channels[1], n_classes, kernel_size=1)
 
     def forward(self, x):
-        x_skips = []
-        for down in self.downs:
-            x_skip, x = down(x)
-            x_skips.append(x_skip)
         x = self.conv1(x)
+        xn = []
+        for down in self.downs:
+            xn.append(x)
+            x = down(x)
         for i, up in enumerate(self.ups):
-            x = up(x, x_skips[-(i + 1)])
-        x = self.conv2(x)
-        x = self.sigmoid(x)
-        return self.resize(x)
-
-
-def main():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    size = (256, 256)
-    unet = UNet((1, 32, 64, 128, 256, 512), 1, size)
-    unet.to(device)
-
-    x = torch.randn(1, 1, *size).to(device)
-    y = unet(x)
-    print(y.shape)
-
-
-if __name__ == "__main__":
-    main()
+            x = up(x, xn[-(i + 1)])
+        return self.conv2(x)
