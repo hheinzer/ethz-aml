@@ -34,9 +34,7 @@ class Up(nn.Module):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.upconv = nn.ConvTranspose2d(
-            in_channels, out_channels, kernel_size=2, stride=2
-        )
+        self.upconv = nn.ConvTranspose2d(in_channels, out_channels, kernel_size=2, stride=2)
         self.conv = DoubleConv(in_channels, out_channels)
 
     def forward(self, x1, x2):
@@ -55,10 +53,7 @@ class UNet(nn.Module):
             [Down(n_channels[i - 1], n_channels[i]) for i in range(2, len(n_channels))]
         )
         self.ups = nn.ModuleList(
-            [
-                Up(n_channels[-i], n_channels[-(i + 1)])
-                for i in range(1, len(n_channels) - 1)
-            ]
+            [Up(n_channels[-i], n_channels[-(i + 1)]) for i in range(1, len(n_channels) - 1)]
         )
         self.conv2 = nn.Conv2d(n_channels[1], n_classes, kernel_size=1)
 
@@ -70,4 +65,5 @@ class UNet(nn.Module):
             x = down(x)
         for i, up in enumerate(self.ups):
             x = up(x, xn[-(i + 1)])
-        return self.conv2(x)
+        x = self.conv2(x)
+        return x

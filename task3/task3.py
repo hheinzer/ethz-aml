@@ -22,24 +22,29 @@ from fcache import fcache
 from unet import UNet
 
 device = torch.device(
-    "cuda"
-    if torch.cuda.is_available()
-    else "mps"
-    if torch.backends.mps.is_available()
-    else "cpu"
+    "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 )
 
 
 def main():
-    print("Using", device)
+    print("device:", device)
     torch.manual_seed(42)
     np.random.seed(42)
 
     train, test = load_data()
-    # plot_frames("frames/initial", train, test)
-
     test = detect_box(train, test)
-    # plot_frames("frames/box", None, test)
+
+    plot_frames("frames", None, None)
+
+
+def load_pkl(fname):
+    with gzip.open(fname, "rb") as f:
+        return pickle.load(f)
+
+
+def save_pkl(fname, data):
+    with gzip.open(fname, "wb") as f:
+        pickle.dump(data, f, 2)
 
 
 @fcache
@@ -62,37 +67,56 @@ def load_data():
     return train, test
 
 
-def load_pkl(fname):
-    with gzip.open(fname, "rb") as f:
-        return pickle.load(f)
+def preprocess(x, size):
+    H, W = x.shape[-2:]
+    x = F.pad(x, (0, 0, max(0, H - W), max(0, W - H)))
+    x = F.resize(x, size, antialias=True)
+    return x
+
+
+def postprocess(x, H, W):
+    x = F.resize(x, max(H, W), antialias=True)
+    x = F.crop(x, 0, 0, H, W)
+    return x
+
+
+class EchoDataset(Dataset):
+    def __init__(self, X, Y, transform=None):
+        self.X = X
+        self.Y = Y
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.X)
+
+    def __getitem__(self, idx):
+        if self.transform is not None:
+            return self.transform(Image(self.X[idx]), Mask(self.Y[idx]))
+        return self.X[idx], self.Y[idx]
 
 
 def detect_box(train, test):
-    Xa, Ya, Xe, Ye = [], [], [], []
-    for data in train:
-        if data["dataset"] == "amateur":
-            Xa.append(data["video"][::5])
-            Ya.append(data["box"].unsqueeze(0).expand(Xa[-1].shape))
-        else:
-            Xe.append(data["video"])
-            Ye.append(data["box"].unsqueeze(0).expand(Xe[-1].shape))
-
     size = 128
-    model = UNet((1, 16, 32, 64, 128), 1).to(device)
-    opti = optim.Adam(model.parameters(), weight_decay=1e-3)
+    model = UNet((1, 16, 32, 64, 128, 256), 1).to(device)
+    opti = optim.Adam(model.parameters(), weight_decay=1e-5)
     loss_fn = nn.BCEWithLogitsLoss()
     trans = T.RandomPerspective(distortion_scale=0.5)
 
     try:
         model.load_state_dict(torch.load("models/box_model.pt"))
     except:
+        Xa, Ya, Xe, Ye = [], [], [], []
+        for data in train:
+            if data["dataset"] == "amateur":
+                Xa.append(data["video"][::5])
+                Ya.append(data["box"].unsqueeze(0).expand(Xa[-1].shape))
+            else:
+                Xe.append(data["video"])
+                Ye.append(data["box"].unsqueeze(0).expand(Xe[-1].shape))
+
         os.makedirs("train", exist_ok=True)
-        train_model(
-            Xa, Ya, model, opti, loss_fn, trans, size, 16, 5, "train/box_model_amateur"
-        )
-        train_model(
-            Xe, Ye, model, opti, loss_fn, trans, size, 16, 5, "train/box_model_expert"
-        )
+        train_model(Xa, Ya, model, opti, loss_fn, trans, size, 16, 5, "train/box_model_amateur")
+        train_model(Xe, Ye, model, opti, loss_fn, trans, size, 16, 5, "train/box_model_expert")
         os.makedirs("models", exist_ok=True)
         torch.save(model.state_dict(), "models/box_model.pt")
 
@@ -102,25 +126,23 @@ def detect_box(train, test):
     for data in train:
         if data["dataset"] == "amateur":
             continue
-        box = preprocess(data["box"], size).squeeze()
-        bounds = torch.argwhere(box > 0.5)[[0, -1], :]
+        box = preprocess(data["box"], size).numpy()
+        bounds = np.argwhere(box > 0.5)[[0, -1], :]
         box_shape.append(bounds[1] - bounds[0])
-    H, W = torch.mean(torch.stack(box_shape).float(), dim=0).round().int()
+    _, H, W = np.mean(box_shape, axis=0).round().astype(int)
 
     for data in test:
-        box = data["box"].mean(dim=0)
-        _, y, x = torch.argwhere(box > 0.5).float().mean(dim=0).round().int()
-        box = torch.zeros_like(box)
+        box = data["box"].numpy().mean(axis=0)
+        _, y, x = np.argwhere(box > 0.5).mean(axis=0).round().astype(int)
+        box = torch.zeros(box.shape)
         box[0, y - H // 2 : y + H // 2, x - W // 2 : x + W // 2] = 1.0
         data["box"] = postprocess(box, *data["shape"])
 
     return test
 
 
-def train_model(
-    X, Y, model, opti, loss_fn, trans, size, batch_size, n_epochs, prefix=None
-):
-    X, Y = map(lambda XY: [preprocess(xy.to(device), size).cpu() for xy in XY], (X, Y))
+def train_model(X, Y, model, opti, loss_fn, trans, size, batch_size, n_epochs, prefix=None):
+    X, Y = map(lambda xs: [preprocess(x.to(device), size) for x in xs], (X, Y))
 
     X0, X1, Y0, Y1 = train_test_split(X, Y)
     X0, X1, Y0, Y1 = map(lambda x: torch.cat(x), (X0, X1, Y0, Y1))
@@ -167,45 +189,12 @@ def train_model(
             fig.savefig(f"{prefix}_{epoch + 1:04d}.pdf", bbox_inches="tight")
 
 
-def preprocess(x, size):
-    H, W = x.shape[-2:]
-    x = F.pad(x, (0, 0, max(0, H - W), max(0, W - H)))
-    x = F.resize(x, size, antialias=True)
-    return x
-
-
-class EchoDataset(Dataset):
-    def __init__(self, X, Y, transform=None):
-        self.X = X
-        self.Y = Y
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.X)
-
-    def __getitem__(self, idx):
-        if self.transform is not None:
-            return self.transform(Image(self.X[idx]), Mask(self.Y[idx]))
-        return self.X[idx], self.Y[idx]
-
-
 def eval_model(test, model, size, key):
     with torch.no_grad():
         for data in test:
             X = preprocess(data["video"].to(device), size)
             data[key] = model(X).cpu()
     return test
-
-
-def postprocess(x, H, W):
-    x = F.resize(x, max(H, W), antialias=True)
-    x = F.crop(x, 0, 0, H, W)
-    return x
-
-
-def save_pkl(fname, data):
-    with gzip.open(fname, "wb") as f:
-        pickle.dump(data, f, 2)
 
 
 if __name__ == "__main__":
