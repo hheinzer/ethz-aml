@@ -34,7 +34,7 @@ def main():
     train, test = load_data()
     test = detect_box(train, test)
 
-    plot_frames("frames", None, None)
+    plot_frames("frames", None, test)
 
 
 def load_pkl(fname):
@@ -98,7 +98,7 @@ class EchoDataset(Dataset):
 def detect_box(train, test):
     size = 128
     model = UNet((1, 16, 32, 64, 128, 256), 1).to(device)
-    opti = optim.Adam(model.parameters(), weight_decay=1e-5)
+    opti = optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
     loss_fn = nn.BCEWithLogitsLoss()
     trans = T.RandomPerspective(distortion_scale=0.5)
 
@@ -118,24 +118,15 @@ def detect_box(train, test):
         train_model(Xa, Ya, model, opti, loss_fn, trans, size, 16, 5, "train/box_model_amateur")
         train_model(Xe, Ye, model, opti, loss_fn, trans, size, 16, 5, "train/box_model_expert")
         os.makedirs("models", exist_ok=True)
-        torch.save(model.state_dict(), "models/box_model.pt")
+        # torch.save(model.state_dict(), "models/box_model.pt")
 
     test = eval_model(test, model, size, "box")
 
-    box_shape = []
-    for data in train:
-        if data["dataset"] == "amateur":
-            continue
-        box = preprocess(data["box"], size).numpy()
-        bounds = np.argwhere(box > 0.5)[[0, -1], :]
-        box_shape.append(bounds[1] - bounds[0])
-    _, H, W = np.mean(box_shape, axis=0).round().astype(int)
-
     for data in test:
         box = data["box"].numpy().mean(axis=0)
-        _, y, x = np.argwhere(box > 0.5).mean(axis=0).round().astype(int)
+        _, y, x = np.argwhere(box > 0.5).T.round().astype(int)
         box = torch.zeros(box.shape)
-        box[0, y - H // 2 : y + H // 2, x - W // 2 : x + W // 2] = 1.0
+        box[0, y.min() : y.max(), x.min() : x.max()] = 1.0
         data["box"] = postprocess(box, *data["shape"])
 
     return test
@@ -164,8 +155,7 @@ def train_model(X, Y, model, opti, loss_fn, trans, size, batch_size, n_epochs, p
         valid_loss = 0
         with torch.no_grad():
             for x, y in loader1:
-                pred = model(x.to(device))
-                valid_loss += loss_fn(pred, y.to(device)).item()
+                valid_loss += loss_fn(model(x.to(device)), y.to(device)).item()
         valid_loss /= len(loader1)
         print(f"train_loss: {train_loss:.4f}, valid_loss: {valid_loss:.4f}")
 

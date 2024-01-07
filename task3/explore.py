@@ -14,11 +14,11 @@ def plot_frames(prefix, train, test):
     if train is not None:
         with mp.Pool(6) as pool:
             train = [(prefix + "/train", i, data) for i, data in enumerate(train)]
-            list(tqdm(pool.imap(_plot_frames, train), total=len(train)))
+            list(tqdm(pool.imap(_plot_frames, train), total=len(train), desc="plot train"))
     if test is not None:
         with mp.Pool(6) as pool:
             test = [(prefix + "/test", i, data) for i, data in enumerate(test)]
-            list(tqdm(pool.imap(_plot_frames, test), total=len(test)))
+            list(tqdm(pool.imap(_plot_frames, test), total=len(test), desc="plot test"))
 
 
 def _plot_frames(args):

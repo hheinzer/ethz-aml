@@ -13,8 +13,9 @@ class DoubleConv(nn.Module):
         self.relu = nn.ReLU()
 
     def forward(self, x):
-        x = self.relu(self.bnorm(self.conv1(x)))
-        return self.relu(self.bnorm(self.conv2(x)))
+        x = self.bnorm(self.relu(self.conv1(x)))
+        x = self.bnorm(self.relu(self.conv2(x)))
+        return x
 
 
 class Down(nn.Module):
@@ -65,5 +66,4 @@ class UNet(nn.Module):
             x = down(x)
         for i, up in enumerate(self.ups):
             x = up(x, xn[-(i + 1)])
-        x = self.conv2(x)
-        return x
+        return self.conv2(x)
