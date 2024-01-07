@@ -14,11 +14,11 @@ def plot_frames(prefix, train, test):
     if train is not None:
         with mp.Pool(6) as pool:
             train = [(prefix + "/train", i, data) for i, data in enumerate(train)]
-            list(tqdm(pool.imap(_plot_frames, train), total=len(train), desc="plot train"))
+            list(tqdm(pool.imap(_plot_frames, train), "plot train", total=len(train)))
     if test is not None:
         with mp.Pool(6) as pool:
             test = [(prefix + "/test", i, data) for i, data in enumerate(test)]
-            list(tqdm(pool.imap(_plot_frames, test), total=len(test), desc="plot test"))
+            list(tqdm(pool.imap(_plot_frames, test), "plot test", total=len(test)))
 
 
 def _plot_frames(args):
@@ -35,7 +35,7 @@ def _plot_frames(args):
     for j, (frame, label) in enumerate(zip(video, labels)):
         fig, ax = plt.subplots(num=1, clear=True)
         ax.imshow(frame, cmap="gray", vmin=vmin, vmax=vmax)
-        ax.contour(box, levels=[0.5], colors="tab:blue")
+        ax.contour(box, levels=[0.9], colors="tab:blue")
         ax.imshow(np.where(label, 2, np.nan), cmap="tab10", vmin=0.5, vmax=10.5, alpha=0.6)
         ax.set_axis_off()
         ax.set_title(f"{dataset} frame: {j + 1:4d}/{len(video)}")

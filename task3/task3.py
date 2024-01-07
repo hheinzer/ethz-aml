@@ -13,11 +13,12 @@ import torch.optim as optim
 import torchvision.transforms.v2 as T
 import torchvision.transforms.v2.functional as F
 from sklearn.model_selection import train_test_split
+from torch.nn.functional import sigmoid
 from torch.utils.data import DataLoader, Dataset
 from torchvision.tv_tensors import Image, Mask
 from tqdm import tqdm
 
-from explore import plot_frames
+from explore import merge_pdfs, plot_frames
 from fcache import fcache
 from unet import UNet
 
@@ -118,13 +119,13 @@ def detect_box(train, test):
         train_model(Xa, Ya, model, opti, loss_fn, trans, size, 16, 5, "train/box_model_amateur")
         train_model(Xe, Ye, model, opti, loss_fn, trans, size, 16, 5, "train/box_model_expert")
         os.makedirs("models", exist_ok=True)
-        # torch.save(model.state_dict(), "models/box_model.pt")
+        torch.save(model.state_dict(), "models/box_model.pt")
 
     test = eval_model(test, model, size, "box")
 
     for data in test:
         box = data["box"].numpy().mean(axis=0)
-        _, y, x = np.argwhere(box > 0.5).T.round().astype(int)
+        _, y, x = np.argwhere(box > 0.9).T.round().astype(int)
         box = torch.zeros(box.shape)
         box[0, y.min() : y.max(), x.min() : x.max()] = 1.0
         data["box"] = postprocess(box, *data["shape"])
@@ -164,26 +165,27 @@ def train_model(X, Y, model, opti, loss_fn, trans, size, batch_size, n_epochs, p
 
         with torch.no_grad():
             x, y = next(iter(loader1))
-            pred = model(x.to(device))
+            pred = sigmoid(model(x.to(device)))
             fig, axs = plt.subplots(4, 4, num=1, clear=True, figsize=(10, 10))
             for ax, xi, yi, pi in zip(axs.flatten(), x, y, pred):
                 xi, yi, pi = map(lambda x: x.squeeze().cpu().numpy(), (xi, yi, pi))
                 ax.imshow(xi, cmap="gray")
-                ax.contour(yi, levels=[0.5], colors="tab:blue")
-                ax.contour(pi, levels=[0.5], colors="tab:orange")
+                ax.contour(yi, levels=[0.9], colors="tab:blue")
+                ax.contour(pi, levels=[0.9], colors="tab:orange")
                 ax.set_axis_off()
             fig.suptitle(
                 f"epoch {epoch + 1}/{n_epochs}, train_loss: {train_loss:.4f}, valid_loss: {valid_loss:.4f}"
             )
             fig.tight_layout()
             fig.savefig(f"{prefix}_{epoch + 1:04d}.pdf", bbox_inches="tight")
+    merge_pdfs(prefix)
 
 
 def eval_model(test, model, size, key):
     with torch.no_grad():
-        for data in test:
+        for data in tqdm(test, "eval"):
             X = preprocess(data["video"].to(device), size)
-            data[key] = model(X).cpu()
+            data[key] = sigmoid(model(X)).cpu()
     return test
 
 
