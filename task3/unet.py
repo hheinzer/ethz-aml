@@ -2,6 +2,31 @@ import torch
 import torch.nn as nn
 
 
+class UNet(nn.Module):
+    def __init__(self, n_channels, n_classes):
+        super().__init__()
+        self.n_channels = n_channels
+        self.n_classes = n_classes
+        self.conv1 = DoubleConv(n_channels[0], n_channels[1])
+        self.downs = nn.ModuleList(
+            [Down(n_channels[i - 1], n_channels[i]) for i in range(2, len(n_channels))]
+        )
+        self.ups = nn.ModuleList(
+            [Up(n_channels[-i], n_channels[-(i + 1)]) for i in range(1, len(n_channels) - 1)]
+        )
+        self.conv2 = nn.Conv2d(n_channels[1], n_classes, kernel_size=1)
+
+    def forward(self, x):
+        x = self.conv1(x)
+        xn = []
+        for down in self.downs:
+            xn.append(x)
+            x = down(x)
+        for i, up in enumerate(self.ups):
+            x = up(x, xn[-(i + 1)])
+        return self.conv2(x)
+
+
 class DoubleConv(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
@@ -13,8 +38,8 @@ class DoubleConv(nn.Module):
         self.relu = nn.ReLU()
 
     def forward(self, x):
-        x = self.bnorm(self.relu(self.conv1(x)))
-        x = self.bnorm(self.relu(self.conv2(x)))
+        x = self.relu(self.bnorm(self.conv1(x)))
+        x = self.relu(self.bnorm(self.conv2(x)))
         return x
 
 
@@ -42,28 +67,3 @@ class Up(nn.Module):
         x1 = self.upconv(x1)
         x = torch.cat([x2, x1], dim=1)
         return self.conv(x)
-
-
-class UNet(nn.Module):
-    def __init__(self, n_channels, n_classes):
-        super().__init__()
-        self.n_channels = n_channels
-        self.n_classes = n_classes
-        self.conv1 = DoubleConv(n_channels[0], n_channels[1])
-        self.downs = nn.ModuleList(
-            [Down(n_channels[i - 1], n_channels[i]) for i in range(2, len(n_channels))]
-        )
-        self.ups = nn.ModuleList(
-            [Up(n_channels[-i], n_channels[-(i + 1)]) for i in range(1, len(n_channels) - 1)]
-        )
-        self.conv2 = nn.Conv2d(n_channels[1], n_classes, kernel_size=1)
-
-    def forward(self, x):
-        x = self.conv1(x)
-        xn = []
-        for down in self.downs:
-            xn.append(x)
-            x = down(x)
-        for i, up in enumerate(self.ups):
-            x = up(x, xn[-(i + 1)])
-        return self.conv2(x)

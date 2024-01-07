@@ -35,7 +35,7 @@ def main():
     train, test = load_data()
     test = detect_box(train, test)
 
-    plot_frames("frames", None, test)
+    plot_frames("frames", None, None)
 
 
 def load_pkl(fname):
@@ -98,8 +98,8 @@ class EchoDataset(Dataset):
 
 def detect_box(train, test):
     size = 128
-    model = UNet((1, 16, 32, 64, 128, 256), 1).to(device)
-    opti = optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
+    model = UNet((1, 32, 64, 128, 256, 512), 1).to(device)
+    opti = optim.Adam(model.parameters(), lr=0.001, weight_decay=0.001)
     loss_fn = nn.BCEWithLogitsLoss()
     trans = T.RandomPerspective(distortion_scale=0.5)
 
@@ -116,7 +116,7 @@ def detect_box(train, test):
                 Ye.append(data["box"].unsqueeze(0).expand(Xe[-1].shape))
 
         os.makedirs("train", exist_ok=True)
-        train_model(Xa, Ya, model, opti, loss_fn, trans, size, 16, 5, "train/box_model_amateur")
+        train_model(Xa, Ya, model, opti, loss_fn, trans, size, 32, 5, "train/box_model_amateur")
         train_model(Xe, Ye, model, opti, loss_fn, trans, size, 16, 5, "train/box_model_expert")
         os.makedirs("models", exist_ok=True)
         torch.save(model.state_dict(), "models/box_model.pt")
@@ -125,7 +125,7 @@ def detect_box(train, test):
 
     for data in test:
         box = data["box"].numpy().mean(axis=0)
-        _, y, x = np.argwhere(box > 0.9).T.round().astype(int)
+        _, y, x = np.argwhere(box > 0.5).T.round().astype(int)
         box = torch.zeros(box.shape)
         box[0, y.min() : y.max(), x.min() : x.max()] = 1.0
         data["box"] = postprocess(box, *data["shape"])
@@ -170,8 +170,8 @@ def train_model(X, Y, model, opti, loss_fn, trans, size, batch_size, n_epochs, p
             for ax, xi, yi, pi in zip(axs.flatten(), x, y, pred):
                 xi, yi, pi = map(lambda x: x.squeeze().cpu().numpy(), (xi, yi, pi))
                 ax.imshow(xi, cmap="gray")
-                ax.contour(yi, levels=[0.9], colors="tab:blue")
-                ax.contour(pi, levels=[0.9], colors="tab:orange")
+                ax.contour(yi, levels=[0.5], colors="tab:blue")
+                ax.contour(pi, levels=[0.5], colors="tab:orange")
                 ax.set_axis_off()
             fig.suptitle(
                 f"epoch {epoch + 1}/{n_epochs}, train_loss: {train_loss:.4f}, valid_loss: {valid_loss:.4f}"
