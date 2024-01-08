@@ -12,15 +12,14 @@ import torch.nn as nn
 import torch.optim as optim
 import torchvision.transforms.v2 as T
 import torchvision.transforms.v2.functional as F
+from checkpt import checkpoint
+from explore import merge_pdfs, plot_frames
+from rnmf import rnmf
 from sklearn.model_selection import train_test_split
 from torch.nn.functional import sigmoid
 from torch.utils.data import DataLoader, Dataset
 from torchvision.tv_tensors import Image, Mask
 from tqdm import tqdm
-
-from checkpoint import checkpoint
-from explore import merge_pdfs, plot_frames
-from rnmf import rnmf
 from unet import UNet
 
 device = torch.device(
