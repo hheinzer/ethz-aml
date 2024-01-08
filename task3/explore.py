@@ -24,19 +24,29 @@ def plot_frames(prefix, train, test):
 def _plot_frames(args):
     prefix, i, data = args
 
-    get = lambda x: x.squeeze().cpu().numpy()
-    video = get(data["video"])
-    box = get(data["box"]) if "box" in data else np.zeros_like(video[0])
-    labels = get(data["label"]) if "label" in data else np.zeros_like(video)
+    video = data["video"]
+    box = data["box"] if "box" in data else None
+    movement = data["movement"] if "movement" in data else None
+    label = data["label"] if "label" in data else None
     dataset = f"({data['dataset']})" if "dataset" in data else ""
 
-    mpl.rcParams.update(mpl.rcParamsDefault)
+    if movement is not None:
+        movement = np.where(movement > 0.2, movement, np.nan)
+
+    if label is not None:
+        label = np.where(label, 3.0, np.nan)
+
     vmin, vmax = video.min(), video.max()
-    for j, (frame, label) in enumerate(zip(video, labels)):
+    mpl.rcParams.update(mpl.rcParamsDefault)
+    for j in range(len(video)):
         fig, ax = plt.subplots(num=1, clear=True)
-        ax.imshow(frame, cmap="gray", vmin=vmin, vmax=vmax)
-        ax.contour(box, levels=[0.5], colors="tab:blue")
-        ax.imshow(np.where(label, 2, np.nan), cmap="tab10", vmin=0.5, vmax=10.5, alpha=0.6)
+        ax.imshow(video[j], cmap="gray", vmin=vmin, vmax=vmax)
+        if box is not None:
+            ax.contour(box, levels=[0.5], colors="tab:blue")
+        if movement is not None:
+            ax.imshow(movement[j], cmap="Oranges", vmin=0.0, vmax=1.0, alpha=0.6)
+        if label is not None:
+            ax.imshow(label[j], cmap="tab10", vmin=0.5, vmax=10.5, alpha=0.6)
         ax.set_axis_off()
         ax.set_title(f"{dataset} frame: {j + 1:4d}/{len(video)}")
         fig.savefig(f"{prefix}_{i:04d}_{j:04d}.pdf", bbox_inches="tight")
