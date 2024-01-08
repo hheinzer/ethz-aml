@@ -3,6 +3,8 @@ import torch.nn as nn
 
 
 class UNet(nn.Module):
+    """https://github.com/milesial/Pytorch-UNet"""
+
     def __init__(self, n_channels, n_classes):
         super().__init__()
         self.n_channels = n_channels
