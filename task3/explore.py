@@ -31,7 +31,7 @@ def _plot_frames(args):
     dataset = f"({data['dataset']})" if "dataset" in data else ""
 
     if movement is not None:
-        movement = np.where(movement > 0.2, movement, np.nan)
+        movement = np.where(movement > 0.01, 2.0, np.nan)
 
     if label is not None:
         label = np.where(label, 3.0, np.nan)
@@ -44,7 +44,7 @@ def _plot_frames(args):
         if box is not None:
             ax.contour(box, levels=[0.5], colors="tab:blue")
         if movement is not None:
-            ax.imshow(movement[j], cmap="Oranges", vmin=0.0, vmax=1.0, alpha=0.6)
+            ax.imshow(movement[j], cmap="tab10", vmin=0.5, vmax=10.5, alpha=0.6)
         if label is not None:
             ax.imshow(label[j], cmap="tab10", vmin=0.5, vmax=10.5, alpha=0.6)
         ax.set_axis_off()
