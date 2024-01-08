@@ -2,9 +2,12 @@ import torch
 from torch.nn.functional import normalize
 
 
-def rnmf(data, rank, regval, tol=1e-6, max_iter=1000):
+def rnmf(data, rank, regval, tol=1e-6, max_iter=10000):
     """https://github.com/neel-dey/robust-nmf/tree/master"""
     device = data.device
+
+    shape = data.shape
+    data = data.view(shape[0], -1)
 
     basis = torch.rand(data.shape[0], rank).to(device)
     coeff = torch.rand(rank, data.shape[1]).to(device)
@@ -39,5 +42,7 @@ def rnmf(data, rank, regval, tol=1e-6, max_iter=1000):
 
         if iter == (max_iter - 1):
             print("rnmf reached max_iter")
+
+    outlier = outlier.view(shape)
 
     return basis, coeff, outlier, err[:iter], obj[:iter]
