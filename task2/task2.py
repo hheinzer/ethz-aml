@@ -11,21 +11,22 @@ from imblearn import over_sampling, pipeline
 from sklearn import ensemble, model_selection, preprocessing
 from tqdm import tqdm
 
+from checkpt import checkpoint
 from explore import plot_ecgs
-from fcache import fcache
 
 
 def main():
     np.random.seed(42)
 
-    X_train, y_train, X_test = load_data()
+    X_train, y_train, X_test = checkpoint("load_data", load_data)
     print(X_train.shape, y_train.shape, X_test.shape)
 
-    X_train = extract_features(X_train, inverse=True)
+    X_train = checkpoint("extract_features_train", extract_features, X_train, inverse=True)
     y_train = np.hstack((y_train, y_train))
-    X_test = extract_features(X_test, inverse=False)
+    X_test = checkpoint("extract_features_test", extract_features, X_test)
     plot_ecgs(X_train, y_train, 10)
-    X_train, X_test = map(create_features, [X_train, X_test])
+    X_train = checkpoint("create_features_train", create_features, X_train)
+    X_test = checkpoint("create_features_test", create_features, X_test)
     print(X_train.shape, X_test.shape)
 
     model = pipeline.make_pipeline(
@@ -39,7 +40,6 @@ def main():
     create_submission(model, X_train, y_train, X_test)
 
 
-@fcache
 def load_data():
     X_train = read_raw_data("data/X_train.csv")
     y_train = np.genfromtxt("data/y_train.csv", delimiter=",", skip_header=1)[:, 1:]
@@ -56,15 +56,12 @@ def read_raw_data(fname):
     return np.array(data, dtype=object)
 
 
-@fcache
 def extract_features(X, inverse=False):
     with mp.Pool(6) as pool:
         Xn = list(tqdm(pool.imap(_extract_features, X), total=len(X)))
     if inverse:
         with mp.Pool(6) as pool:
-            Xn += list(
-                tqdm(pool.imap(_extract_features, [-x for x in X]), total=len(X))
-            )
+            Xn += list(tqdm(pool.imap(_extract_features, [-x for x in X]), total=len(X)))
     return Xn
 
 
@@ -74,7 +71,6 @@ def _extract_features(x):
     return clean, rpeaks, epochs, rate, signals, info
 
 
-@fcache
 def create_features(X):
     with mp.Pool(6) as pool:
         Xn = list(tqdm(pool.imap(_create_features, X), total=len(X)))
@@ -159,9 +155,7 @@ def create_submission(model, X_train, y_train, X_test):
     model.fit(X_train, y_train)
     pred = model.predict(X_test)
     pred = np.vstack((np.arange(X_test.shape[0]), pred)).T
-    np.savetxt(
-        "submission.csv", pred, fmt="%.16g", delimiter=",", header="id,y", comments=""
-    )
+    np.savetxt("submission.csv", pred, fmt="%.16g", delimiter=",", header="id,y", comments="")
 
 
 if __name__ == "__main__":
