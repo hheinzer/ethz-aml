@@ -16,8 +16,6 @@ from explore import plot_ecgs
 
 
 def main():
-    np.random.seed(42)
-
     X_train, y_train, X_test = checkpoint("load_data", load_data)
     print(X_train.shape, y_train.shape, X_test.shape)
 

@@ -29,8 +29,6 @@ device = torch.device(
 
 def main():
     print("device:", device)
-    torch.manual_seed(42)
-    np.random.seed(42)
 
     train, test = checkpoint("load_data", load_data, ())
     test = checkpoint("detect_box", detect_box, (train, test))
