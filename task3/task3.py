@@ -57,18 +57,18 @@ def load_data():
     train = load_pkl("data/train.pkl")
     for data in train:
         data["shape"] = data["video"].shape[:2]
-        data["video"] = np.moveaxis(data["video"], 2, 0).astype(np.float32) / 255.0
+        data["video"] = np.moveaxis(data["video"], 2, 0)
         data["label"] = np.moveaxis(data["label"], 2, 0)
     test = load_pkl("data/test.pkl")
     for data in test:
         data["shape"] = data["video"].shape[:2]
-        data["video"] = np.moveaxis(data["video"], 2, 0).astype(np.float32) / 255.0
+        data["video"] = np.moveaxis(data["video"], 2, 0)
     return train, test
 
 
 def detect_box(train, test):
     size = 128
-    model = UNet((1, 32, 64, 128, 256, 512), 1).to(device)
+    model = UNet((1, 32, 64, 128, 256, 512), 1, 255.0).to(device)
     opti = optim.Adam(model.parameters(), lr=0.001, weight_decay=0.001)
     loss_fn = nn.BCEWithLogitsLoss()
     trans = T.RandomPerspective(distortion_scale=0.5)
@@ -196,6 +196,7 @@ def detect_movement(dataset):
     size = 128
     for data in tqdm(dataset, "movement"):
         video = preprocess(data["video"], size)
+        video /= 255.0
         _, _, movement, _, _ = rnmf(video.to(device), 2, 1.0)
         movement /= movement.max()
         movement = postprocess(movement, *data["shape"])

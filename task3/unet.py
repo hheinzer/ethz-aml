@@ -5,10 +5,11 @@ import torch.nn as nn
 class UNet(nn.Module):
     """https://github.com/milesial/Pytorch-UNet"""
 
-    def __init__(self, n_channels, n_classes):
+    def __init__(self, n_channels, n_classes, in_scale):
         super().__init__()
         self.n_channels = n_channels
         self.n_classes = n_classes
+        self.in_scale = in_scale
         self.conv1 = DoubleConv(n_channels[0], n_channels[1])
         self.downs = nn.ModuleList(
             [Down(n_channels[i - 1], n_channels[i]) for i in range(2, len(n_channels))]
@@ -19,6 +20,7 @@ class UNet(nn.Module):
         self.conv2 = nn.Conv2d(n_channels[1], n_classes, kernel_size=1)
 
     def forward(self, x):
+        x /= self.in_scale
         x = self.conv1(x)
         xn = []
         for down in self.downs:
