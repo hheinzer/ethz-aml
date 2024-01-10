@@ -153,7 +153,7 @@ def create_submission(model, X_train, y_train, X_test):
     model.fit(X_train, y_train)
     pred = model.predict(X_test)
     pred = np.vstack((np.arange(X_test.shape[0]), pred)).T
-    np.savetxt("submission.csv", pred, fmt="%.16g", delimiter=",", header="id,y", comments="")
+    np.savetxt("submission.csv", pred, delimiter=",", header="id,y", comments="")
 
 
 if __name__ == "__main__":
