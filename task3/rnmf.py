@@ -24,6 +24,7 @@ def rnmf(data, rank, regval, tol=1e-6, max_iter=10000):
     err[0] = error(data, approx)
     obj[0] = objective(err, regval, outlier)
 
+    iter = 0
     for iter in range(max_iter):
         outlier *= data / (approx + regval * normalize(outlier, p=2, dim=0, eps=tol))
         approx = basis @ coeff + outlier + tol
