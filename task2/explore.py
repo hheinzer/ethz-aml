@@ -10,9 +10,7 @@ from pypdf import PdfMerger
 def plot_ecgs(X, y, n):
     mpl.rcParams.update(mpl.rcParamsDefault)
     for j in np.unique(y):
-        for i, (idx, x) in enumerate(
-            [(i, x) for i, x in enumerate(X) if y[i] == j][:n]
-        ):
+        for i, (idx, x) in enumerate([(i, x) for i, x in enumerate(X) if y[i] == j][:n]):
             clean, rpeaks, epochs, _, _, _ = x
 
             _, ax = plt.subplots(2, 2, num=1, clear=True, figsize=(10, 10))
