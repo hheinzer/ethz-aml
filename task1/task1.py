@@ -12,7 +12,6 @@ from sklearn import (
 )
 
 from explore import plot_outliers
-from fcache import fcache
 
 
 def main():
@@ -42,7 +41,6 @@ def main():
     create_submission(model, X_train, y_train, X_test)
 
 
-@fcache
 def load_data():
     X_train = np.genfromtxt("data/X_train.csv", delimiter=",", skip_header=1)[:, 1:]
     y_train = np.genfromtxt("data/y_train.csv", delimiter=",", skip_header=1)[:, 1:]
@@ -51,7 +49,6 @@ def load_data():
     return X_train, y_train, X_test
 
 
-@fcache
 def remove_outliers(X_train, y_test, X_test):
     model = pipeline.make_pipeline(
         preprocessing.RobustScaler(),
@@ -65,7 +62,6 @@ def remove_outliers(X_train, y_test, X_test):
     return X_train, y_test
 
 
-@fcache
 def preprocess(X_train, X_test):
     model = pipeline.make_pipeline(
         preprocessing.StandardScaler(),
@@ -76,7 +72,6 @@ def preprocess(X_train, X_test):
     return X_train, X_test
 
 
-@fcache
 def select_features(X_train, y_train, X_test):
     model = pipeline.make_pipeline(
         feature_selection.VarianceThreshold(),
@@ -93,9 +88,7 @@ def create_submission(model, X_train, y_train, X_test):
     model.fit(X_train, y_train)
     pred = model.predict(X_test)
     pred = np.vstack((np.arange(X_test.shape[0]), pred)).T
-    np.savetxt(
-        "submission.csv", pred, fmt="%.16g", delimiter=",", header="id,y", comments=""
-    )
+    np.savetxt("submission.csv", pred, fmt="%.16g", delimiter=",", header="id,y", comments="")
 
 
 if __name__ == "__main__":
