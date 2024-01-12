@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import LinearSegmentedColormap
 from pypdf import PdfMerger
+from torch.nn.functional import sigmoid
 from tqdm import tqdm
 
 
@@ -31,17 +32,16 @@ def _plot_frames(args):
     label = data["label"] if "label" in data else None
     dataset = f"({data['dataset']})" if "dataset" in data else ""
 
-    vmin, vmax = video.min(), video.max()
     mpl.rcParams.update(mpl.rcParamsDefault)
     for j in range(len(video)):
         fig, ax = plt.subplots(num=1, clear=True)
-        ax.imshow(video[j], cmap="gray", vmin=vmin, vmax=vmax, interpolation=None)
+        ax.imshow(video[j], cmap="gray", vmin=0, vmax=255)
         if box is not None:
             ax.contour(box, levels=[0.5], colors="tab:blue")
         if movement is not None:
-            ax.imshow(movement[j], cmap=alpha_cmap("Oranges"), alpha=0.6, interpolation=None)
+            ax.imshow(movement[j], cmap=alpha_cmap("Oranges"), vmin=0.0, vmax=1.0)
         if label is not None:
-            ax.imshow(label[j], cmap=alpha_cmap("Greens"), alpha=0.6, interpolation=None)
+            ax.imshow(label[j], cmap=alpha_cmap("Greens"), vmin=0.0, vmax=1.0, alpha=0.6)
         ax.set_axis_off()
         ax.set_title(f"{dataset} frame: {j + 1:4d}/{len(video)}")
         fig.savefig(f"{prefix}_{i:04d}_{j:04d}.pdf", bbox_inches="tight")
@@ -50,10 +50,26 @@ def _plot_frames(args):
 
 
 def alpha_cmap(cmap):
-    colors = plt.get_cmap(cmap)([0, 255])
-    colors[:, -1] = np.linspace(0.0, 1.0, 2)
+    colors = plt.get_cmap(cmap)(range(256))
+    colors[:, -1] = np.linspace(0.0, 1.0, 256)
     cmap = LinearSegmentedColormap.from_list("alpha_" + cmap, colors)
     return cmap
+
+
+def plot_intermediate(loader, model, epoch, n_epochs, loss, prefix):
+    device = next(model.parameters()).device
+    x, y = next(iter(loader))
+    pred = sigmoid(model(x.to(device)))
+    fig, axs = plt.subplots(4, 4, num=1, clear=True, figsize=(10, 10))
+    for ax, xi, yi, pi in zip(axs.flatten(), x, y, pred):
+        xi, yi, pi = map(lambda x: x.squeeze().cpu().numpy(), (xi, yi, pi))
+        ax.imshow(xi, cmap="gray")
+        ax.contour(yi, levels=[0.5], colors="tab:blue")
+        ax.contour(pi, levels=[0.5], colors="tab:orange")
+        ax.set_axis_off()
+    fig.suptitle(f"epoch {epoch + 1}/{n_epochs}, loss: {loss:.4f}")
+    fig.tight_layout()
+    fig.savefig(f"{prefix}_{epoch + 1:04d}.pdf", bbox_inches="tight")
 
 
 def merge_pdfs(prefix):
