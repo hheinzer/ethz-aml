@@ -2,7 +2,6 @@ import gzip
 import os
 import pickle
 
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
@@ -46,7 +45,7 @@ def main():
     for data, movement in zip(test, movements):
         data["movement"] = movement
 
-    plot_frames("frames", None, test)
+    plot_frames("frames", train, test)
 
 
 def load_pkl(fname):
@@ -81,7 +80,7 @@ def find_boxes(train, test):
         [
             T.RandomPerspective(distortion_scale=0.5),
             T.RandomAffine(degrees=10, translate=(0.1, 0.1), scale=(0.9, 1.1), shear=10),
-            T.ElasticTransform(sigma=10),
+            T.ElasticTransform(alpha=50, sigma=10),
         ]
     )
 
