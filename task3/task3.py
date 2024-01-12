@@ -37,11 +37,11 @@ def main():
     for data, box in zip(test, boxes):
         data["box"] = box
 
-    movements = checkpoint("detect_train_movement", detect_movement, train)
+    movements = checkpoint("compute_train_movement", compute_movement, train)
     for data, movement in zip(train, movements):
         data["movement"] = movement
 
-    movements = checkpoint("detect_test_movement", detect_movement, test)
+    movements = checkpoint("compute_test_movement", compute_movement, test)
     for data, movement in zip(test, movements):
         data["movement"] = movement
 
@@ -202,7 +202,7 @@ def eval_model(test, model, size, batch_size):
     return pred
 
 
-def detect_movement(dataset):
+def compute_movement(dataset):
     size = 128
     movements = []
     for data in tqdm(dataset, "movement"):
