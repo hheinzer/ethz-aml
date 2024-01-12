@@ -14,16 +14,13 @@ from torch.nn.functional import sigmoid
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
-# os.environ["OMP_NUM_THREADS"] = "6"
-
-
 try:
     from torchvision.tv_tensors import Image, Mask  # 0.16.1 # pyright: ignore
 except:
     from torchvision.datapoints import Image, Mask  # 0.15.2 # pyright: ignore
 
 from checkpt import checkpoint
-from explore import merge_pdfs, plot_frames
+from explore import merge_pdfs, plot_frames, plot_intermediate
 from rnmf import rnmf
 from unet import UNet
 
@@ -36,11 +33,20 @@ def main():
     print("device:", device)
 
     train, test = checkpoint("load_data", load_data)
-    test = checkpoint("detect_box", detect_box, train, test)
-    train = checkpoint("detect_train_movement", detect_movement, train)
-    test = checkpoint("detect_test_movement", detect_movement, test)
 
-    plot_frames("frames", train, test)
+    boxes = checkpoint("find_boxes", find_boxes, train, test)
+    for data, box in zip(test, boxes):
+        data["box"] = box
+
+    movements = checkpoint("detect_train_movement", detect_movement, train)
+    for data, movement in zip(train, movements):
+        data["movement"] = movement
+
+    movements = checkpoint("detect_test_movement", detect_movement, test)
+    for data, movement in zip(test, movements):
+        data["movement"] = movement
+
+    plot_frames("frames", None, test)
 
 
 def load_pkl(fname):
@@ -66,12 +72,18 @@ def load_data():
     return train, test
 
 
-def detect_box(train, test):
+def find_boxes(train, test):
     size = 128
-    model = UNet((1, 32, 64, 128, 256, 512), 1, 255.0).to(device)
+    model = UNet((1, 32, 64, 128, 256, 512), 1).to(device)
     opti = optim.Adam(model.parameters(), lr=0.001, weight_decay=0.001)
     loss_fn = nn.BCEWithLogitsLoss()
-    trans = T.RandomPerspective(distortion_scale=0.5)
+    trans = T.Compose(
+        [
+            T.RandomPerspective(distortion_scale=0.5),
+            T.RandomAffine(degrees=10, translate=(0.1, 0.1), scale=(0.9, 1.1), shear=10),
+            T.ElasticTransform(sigma=10),
+        ]
+    )
 
     try:
         model.load_state_dict(torch.load("models/box_model.pt"))
@@ -85,22 +97,22 @@ def detect_box(train, test):
                 Xe.append(data["video"])
                 Ye.append(np.repeat(data["box"][np.newaxis, :, :], len(Xe[-1]), axis=0))
 
-        os.makedirs("train", exist_ok=True)
-        train_model(Xa, Ya, model, opti, loss_fn, trans, size, 32, 5, "train/box_model_amateur")
-        train_model(Xe, Ye, model, opti, loss_fn, trans, size, 32, 5, "train/box_model_expert")
+        os.makedirs("find_boxes", exist_ok=True)
+        train_model(Xa, Ya, model, opti, loss_fn, trans, size, 32, 5, "find_boxes/amateur_")
+        train_model(Xe, Ye, model, opti, loss_fn, trans, size, 32, 10, "find_boxes/expert_")
         os.makedirs("models", exist_ok=True)
         torch.save(model.state_dict(), "models/box_model.pt")
 
-    test = eval_model(test, model, size, 32, "box")
+    raw_boxes = eval_model(test, model, size, 32)
+    boxes = []
+    for raw_box in raw_boxes:
+        raw_box = raw_box.mean(axis=0)
+        y, x = np.argwhere(raw_box > 0.5).T.round().astype(int)
+        box = np.zeros(raw_box.shape, dtype=bool)
+        box[y.min() : y.max(), x.min() : x.max()] = True
+        boxes.append(box)
 
-    for data in test:
-        box = data["box"].mean(axis=0)
-        y, x = np.argwhere(box > 0.5).T.round().astype(int)
-        box = np.zeros(box.shape)
-        box[y.min() : y.max(), x.min() : x.max()] = 1.0
-        data["box"] = box.astype(np.bool_)
-
-    return test
+    return boxes
 
 
 class EchoDataset(Dataset):
@@ -121,7 +133,14 @@ class EchoDataset(Dataset):
 
 def preprocess(X, size):
     H, W = X.shape[-2:]
-    X = torch.from_numpy(X).to(device).float().unsqueeze(1)
+    X = torch.from_numpy(X).to(device).unsqueeze(1)
+    match X.dtype:
+        case torch.uint8:
+            X = X.float() / 255.0
+        case torch.bool:
+            X = X.float()
+        case _:
+            raise TypeError(f"unexpected dtype: {X.dtype}")
     X = F.pad(X, [0, 0, max(0, H - W), max(0, W - H)])
     X = F.resize(X, size, antialias=True)
     return X.cpu()
@@ -165,43 +184,36 @@ def train_model(X, Y, model, opti, loss_fn, trans, size, batch_size, n_epochs, p
             continue
 
         with torch.no_grad():
-            x, y = next(iter(loader1))
-            pred = sigmoid(model(x.to(device)))
-            fig, axs = plt.subplots(4, 4, num=1, clear=True, figsize=(10, 10))
-            for ax, xi, yi, pi in zip(axs.flatten(), x, y, pred):
-                xi, yi, pi = map(lambda x: x.squeeze().cpu().numpy(), (xi, yi, pi))
-                ax.imshow(xi, cmap="gray")
-                ax.contour(yi, levels=[0.5], colors="tab:blue")
-                ax.contour(pi, levels=[0.5], colors="tab:orange")
-                ax.set_axis_off()
-            fig.suptitle(
-                f"epoch {epoch + 1}/{n_epochs}, train_loss: {train_loss:.4f}, valid_loss: {valid_loss:.4f}"
-            )
-            fig.tight_layout()
-            fig.savefig(f"{prefix}_{epoch + 1:04d}.pdf", bbox_inches="tight")
-    merge_pdfs(prefix)
+            plot_intermediate(loader0, model, epoch, n_epochs, train_loss, prefix + "train")
+            plot_intermediate(loader1, model, epoch, n_epochs, valid_loss, prefix + "valid")
+
+    if prefix is not None:
+        merge_pdfs(prefix + "train")
+        merge_pdfs(prefix + "valid")
 
 
-def eval_model(test, model, size, batch_size, key):
+def eval_model(test, model, size, batch_size):
+    pred = []
     with torch.no_grad():
         for data in tqdm(test, "eval"):
             X = preprocess(data["video"], size)
             X = torch.split(X, batch_size)
             Y = [sigmoid(model(x.to(device))).cpu() for x in X]
-            data[key] = postprocess(torch.cat(Y), *data["shape"])
-    return test
+            pred.append(postprocess(torch.cat(Y), *data["shape"]))
+    return pred
 
 
 def detect_movement(dataset):
     size = 128
+    movements = []
     for data in tqdm(dataset, "movement"):
         video = preprocess(data["video"], size)
-        video /= 255.0
-        _, _, movement, _, _ = rnmf(video.to(device), 2, 1.0)
-        movement /= movement.max()
+        video /= video.max()
+        _, _, movement, _, _ = rnmf(video.to(device), 2, 0.1)
         movement = postprocess(movement, *data["shape"])
-        data["movement"] = movement >= movement.mean()
-    return dataset
+        movement /= movement.max()
+        movements.append(movement)
+    return movements
 
 
 if __name__ == "__main__":
