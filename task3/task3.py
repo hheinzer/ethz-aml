@@ -33,7 +33,7 @@ def main():
 
     train, test = checkpoint("load_data", load_data)
 
-    boxes = checkpoint("find_boxes", find_boxes, train, test)
+    boxes = checkpoint("predict_boxes", predict_boxes, train, test)
     for data, box in zip(test, boxes):
         data["box"] = box
 
@@ -71,7 +71,7 @@ def load_data():
     return train, test
 
 
-def find_boxes(train, test):
+def predict_boxes(train, test):
     size = 128
     model = UNet((1, 32, 64, 128, 256, 512), 1).to(device)
     opti = optim.Adam(model.parameters(), lr=0.001, weight_decay=0.001)
