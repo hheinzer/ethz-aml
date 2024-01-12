@@ -41,7 +41,7 @@ def _plot_frames(args):
         if movement is not None:
             ax.imshow(movement[j], cmap=alpha_cmap("Oranges"), vmin=0.0, vmax=1.0)
         if label is not None:
-            ax.imshow(label[j], cmap=alpha_cmap("Greens"), vmin=0.0, vmax=1.0, alpha=0.6)
+            ax.imshow(label[j], cmap=alpha_cmap("Greens"), vmin=0.0, vmax=1.0, alpha=0.5)
         ax.set_axis_off()
         ax.set_title(f"{dataset} frame: {j + 1:4d}/{len(video)}")
         fig.savefig(f"{prefix}_{i:04d}_{j:04d}.pdf", bbox_inches="tight")
