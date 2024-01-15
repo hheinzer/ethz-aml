@@ -45,17 +45,11 @@ def main():
     for data, movement in zip(test, movements):
         data["movement"] = movement
 
+    valves = checkpoint("predict_valves", predict_valves, train, test)
+    for data, valve in zip(test, valves):
+        data["label"] = valve
+
     plot_frames("frames", train, test)
-
-
-def load_pkl(fname):
-    with gzip.open(fname, "rb") as file:
-        return pickle.load(file)
-
-
-def save_pkl(fname, data):
-    with gzip.open(fname, "wb") as file:
-        pickle.dump(data, file, 2)
 
 
 def load_data():
@@ -69,49 +63,6 @@ def load_data():
         data["shape"] = data["video"].shape[:2]
         data["video"] = np.moveaxis(data["video"], 2, 0)
     return train, test
-
-
-def predict_boxes(train, test):
-    size = 128
-    model = UNet((1, 32, 64, 128, 256, 512), 1).to(device)
-    opti = optim.Adam(model.parameters(), lr=0.001, weight_decay=0.001)
-    loss_fn = nn.BCEWithLogitsLoss()
-    trans = T.Compose(
-        [
-            T.RandomPerspective(distortion_scale=0.5),
-            T.RandomAffine(degrees=10, translate=(0.1, 0.1), scale=(0.9, 1.1), shear=10),
-            T.ElasticTransform(alpha=50, sigma=10),
-        ]
-    )
-
-    try:
-        model.load_state_dict(torch.load("models/box_model.pt"))
-    except:
-        Xa, Ya, Xe, Ye = [], [], [], []
-        for data in train:
-            if data["dataset"] == "amateur":
-                Xa.append(data["video"][::5])
-                Ya.append(np.repeat(data["box"][np.newaxis, :, :], len(Xa[-1]), axis=0))
-            else:
-                Xe.append(data["video"])
-                Ye.append(np.repeat(data["box"][np.newaxis, :, :], len(Xe[-1]), axis=0))
-
-        os.makedirs("find_boxes", exist_ok=True)
-        train_model(Xa, Ya, model, opti, loss_fn, trans, size, 32, 5, "find_boxes/amateur_")
-        train_model(Xe, Ye, model, opti, loss_fn, trans, size, 32, 10, "find_boxes/expert_")
-        os.makedirs("models", exist_ok=True)
-        torch.save(model.state_dict(), "models/box_model.pt")
-
-    raw_boxes = eval_model(test, model, size, 32)
-    boxes = []
-    for raw_box in raw_boxes:
-        raw_box = raw_box.mean(axis=0)
-        y, x = np.argwhere(raw_box > 0.5).T.round().astype(int)
-        box = np.zeros(raw_box.shape, dtype=bool)
-        box[y.min() : y.max(), x.min() : x.max()] = True
-        boxes.append(box)
-
-    return boxes
 
 
 class EchoDataset(Dataset):
@@ -130,29 +81,160 @@ class EchoDataset(Dataset):
         return X, Y
 
 
-def preprocess(X, size):
-    H, W = X.shape[-2:]
-    X = torch.from_numpy(X).to(device).unsqueeze(1)
-    match X.dtype:
-        case torch.uint8:
-            X = X.float() / 255.0
-        case torch.bool:
-            X = X.float()
-        case _:
-            raise TypeError(f"unexpected dtype: {X.dtype}")
-    X = F.pad(X, [0, 0, max(0, H - W), max(0, W - H)])
-    X = F.resize(X, size, antialias=True)
-    return X.cpu()
+def predict_boxes(train, test):
+    size = 128
+    model = UNet((1, 32, 64, 128, 256, 512), 1).to(device)
+    opti = optim.Adam(model.parameters(), lr=0.001, weight_decay=0.001)
+    loss_fn = nn.BCEWithLogitsLoss()
+    trans = T.Compose(
+        [
+            T.RandomPerspective(distortion_scale=0.5),
+            T.RandomAffine(degrees=10, translate=(0.1, 0.1), scale=(0.9, 1.1), shear=10),  # type: ignore
+            T.ElasticTransform(alpha=50, sigma=10),
+        ]
+    )
+
+    try:
+        model.load_state_dict(torch.load("models/boxes.pt"))
+    except:
+        Xa, Ya, Xe, Ye = [], [], [], []
+        for data in train:
+            if data["dataset"] == "amateur":
+                Xa.append(data["video"][::5])
+                Ya.append(np.repeat(data["box"][np.newaxis], len(Xa[-1]), axis=0))
+            else:
+                Xe.append(data["video"])
+                Ye.append(np.repeat(data["box"][np.newaxis], len(Xe[-1]), axis=0))
+
+        os.makedirs("boxes", exist_ok=True)
+        train_model(Xa, Ya, model, opti, loss_fn, trans, size, 32, 100, 3, "boxes/amateur_")
+        train_model(Xe, Ye, model, opti, loss_fn, trans, size, 32, 100, 3, "boxes/expert_")
+        os.makedirs("models", exist_ok=True)
+        torch.save(model.state_dict(), "models/boxes.pt")
+
+    raw_boxes = []
+    with torch.no_grad():
+        for data in tqdm(test, "eval"):
+            X = preprocess(data["video"], size)
+            X = torch.split(X, 64)
+            Y = [sigmoid(model(x.to(device))).cpu() for x in X]
+            raw_boxes.append(postprocess(torch.cat(Y), *data["shape"]))
+
+    boxes = []
+    for raw_box in raw_boxes:
+        raw_box = raw_box.mean(axis=0)
+        y, x = np.argwhere(raw_box > 0.5).T.round().astype(int)
+        box = np.zeros(raw_box.shape, dtype=bool)
+        box[y.min() : y.max(), x.min() : x.max()] = True
+        boxes.append(box)
+
+    return boxes
 
 
-def postprocess(X: torch.Tensor, H, W):
-    X = F.resize(X.to(device), max(H, W), antialias=True)
-    X = F.crop(X, 0, 0, H, W)
-    X = X.squeeze().cpu().numpy()
-    return X
+def compute_movement(dataset):
+    size = 128
+    movements = []
+    for data in tqdm(dataset, "movement"):
+        video = preprocess(data["video"], size)
+        video /= video.max()
+        _, _, movement, _, _ = rnmf(video.to(device), 2, 0.1)
+        movement = postprocess(movement, *data["shape"])
+        movement /= movement.max()
+        movements.append(movement)
+    return movements
 
 
-def train_model(X, Y, model, opti, loss_fn, trans, size, batch_size, n_epochs, prefix=None):
+class RandomEraseFromLabel(nn.Module):
+    def __init__(self, radius, channels=None, p=0.5):
+        super().__init__()
+        self.radius = radius
+        self.channels = channels
+        self.p = p
+
+    def forward(self, img, label):
+        if torch.rand(1) > self.p:
+            return img, label
+        _, H, W = label.shape
+        _, y, x = torch.argwhere(label).t()
+        i = torch.randint(len(y), (1,))
+        y, x = y[i], x[i]
+        r = torch.rand(1) * (self.radius[1] - self.radius[0]) + self.radius[0]
+        r = int(min(H, W) * r)
+        yy, xx = map(torch.from_numpy, np.ogrid[:H, :W])
+        mask = (yy - y) ** 2 + (xx - x) ** 2 <= r**2
+        new_img = img.clone()
+        if self.channels is None:
+            new_img[:, mask] = 0
+        else:
+            for c in self.channels:
+                new_img[c, mask] = 0
+        return new_img, label
+
+
+def predict_valves(train, test):
+    size = 256
+    n_features = 3
+    model = UNet((n_features, 64, 128, 256, 512, 1024), 1).to(device)
+    opti = optim.Adam(model.parameters(), lr=0.001, weight_decay=0.001)
+    loss_fn = nn.BCEWithLogitsLoss()
+    trans = T.Compose(
+        [
+            RandomEraseFromLabel(radius=(0.03, 0.06), channels=[0, 2], p=0.75),
+            T.RandomPerspective(distortion_scale=0.5),
+            T.RandomAffine(degrees=10, translate=(0.1, 0.1), scale=(0.9, 1.1), shear=10),  # type: ignore
+            T.ElasticTransform(alpha=50, sigma=10),
+        ]
+    )
+
+    try:
+        model.load_state_dict(torch.load("models/valves.pt"))
+    except:
+        Xa, Ya, Xe, Ye = [], [], [], []
+        for data in train:
+            H, W = data["shape"]
+            frames = data["frames"]
+            X = np.zeros((len(frames), n_features, H, W), dtype=np.float32)
+            X[:, 0] = data["video"][frames] / 255.0
+            X[:, 1] = np.repeat(data["box"][np.newaxis], len(frames), axis=0)
+            X[:, 2] = data["movement"][frames]
+            if data["dataset"] == "amateur":
+                Xa.append(X)
+                Ya.append(data["label"][frames])
+            else:
+                Xe.append(X)
+                Ye.append(data["label"][frames])
+
+        os.makedirs("valves", exist_ok=True)
+        train_model(Xa, Ya, model, opti, loss_fn, trans, size, 8, 100, 3, "valves/amateur_")
+        train_model(Xe, Ye, model, opti, loss_fn, trans, size, 8, 100, 3, "valves/expert_")
+        os.makedirs("models", exist_ok=True)
+        # torch.save(model.state_dict(), "models/valves.pt")
+
+    raw_valves = []
+    with torch.no_grad():
+        for data in tqdm(test, "eval"):
+            H, W = data["shape"]
+            n_frames = len(data["video"])
+            X = np.zeros((n_frames, n_features, H, W), dtype=np.float32)
+            X[:, 0] = data["video"] / 255.0
+            X[:, 1] = np.repeat(data["box"][np.newaxis], n_frames, axis=0)
+            X[:, 2] = data["movement"]
+            X = preprocess(X, size)
+            X = torch.split(X, 64)
+            Y = [sigmoid(model(x.to(device))).cpu() for x in X]
+            raw_valves.append(postprocess(torch.cat(Y), *data["shape"]))
+
+    valves = []
+    for raw_valve in raw_valves:
+        valve = raw_valve > 0.5
+        valves.append(valve)
+
+    return raw_valves
+
+
+def train_model(
+    X, Y, model, opti, loss_fn, trans, size, batch_size, n_epochs, patience, prefix=None
+):
     X, Y = map(lambda xs: [preprocess(x, size) for x in xs], (X, Y))
 
     X0, X1, Y0, Y1 = train_test_split(X, Y)  # split over videos
@@ -161,6 +243,7 @@ def train_model(X, Y, model, opti, loss_fn, trans, size, batch_size, n_epochs, p
     loader0 = DataLoader(EchoDataset(X0, Y0, trans), batch_size, shuffle=True)
     loader1 = DataLoader(EchoDataset(X1, Y1), batch_size, shuffle=True)
 
+    best_loss, counter = float("inf"), 0
     for epoch in range(n_epochs):
         train_loss = 0
         for x, y in tqdm(loader0, f"epoch {epoch + 1}/{n_epochs}"):
@@ -179,40 +262,59 @@ def train_model(X, Y, model, opti, loss_fn, trans, size, batch_size, n_epochs, p
         valid_loss /= len(loader1)
         print(f"train_loss: {train_loss:.4f}, valid_loss: {valid_loss:.4f}")
 
-        if prefix is None:
-            continue
+        if prefix is not None:
+            with torch.no_grad():
+                plot_intermediate(loader0, model, epoch, n_epochs, train_loss, prefix + "train")
+                plot_intermediate(loader1, model, epoch, n_epochs, valid_loss, prefix + "valid")
 
-        with torch.no_grad():
-            plot_intermediate(loader0, model, epoch, n_epochs, train_loss, prefix + "train")
-            plot_intermediate(loader1, model, epoch, n_epochs, valid_loss, prefix + "valid")
+        if valid_loss < best_loss:
+            best_loss = valid_loss
+            counter = 0
+        else:
+            counter += 1
+            if counter >= patience:
+                print(f"early stopping at epoch {epoch + 1}")
+                break
 
     if prefix is not None:
         merge_pdfs(prefix + "train")
         merge_pdfs(prefix + "valid")
 
 
-def eval_model(test, model, size, batch_size):
-    pred = []
-    with torch.no_grad():
-        for data in tqdm(test, "eval"):
-            X = preprocess(data["video"], size)
-            X = torch.split(X, batch_size)
-            Y = [sigmoid(model(x.to(device))).cpu() for x in X]
-            pred.append(postprocess(torch.cat(Y), *data["shape"]))
-    return pred
+def preprocess(X, size):
+    H, W = X.shape[-2:]
+    X = torch.from_numpy(X).to(device)
+    if X.ndim == 3:
+        X = X.unsqueeze(1)
+    match X.dtype:
+        case torch.uint8:
+            X = X.float() / 255.0
+        case torch.bool:
+            X = X.float()
+        case torch.float:
+            pass
+        case _:
+            raise TypeError(f"unexpected dtype: {X.dtype}")
+    X = F.pad(X, [0, 0, max(0, H - W), max(0, W - H)])
+    X = F.resize(X, size, antialias=True)
+    return X.cpu()
 
 
-def compute_movement(dataset):
-    size = 128
-    movements = []
-    for data in tqdm(dataset, "movement"):
-        video = preprocess(data["video"], size)
-        video /= video.max()
-        _, _, movement, _, _ = rnmf(video.to(device), 2, 0.1)
-        movement = postprocess(movement, *data["shape"])
-        movement /= movement.max()
-        movements.append(movement)
-    return movements
+def postprocess(X: torch.Tensor, H, W):
+    X = F.resize(X.to(device), max(H, W), antialias=True)
+    X = F.crop(X, 0, 0, H, W)
+    X = X.squeeze().cpu().numpy()
+    return X
+
+
+def load_pkl(fname):
+    with gzip.open(fname, "rb") as file:
+        return pickle.load(file)  # type: ignore
+
+
+def save_pkl(fname, data):
+    with gzip.open(fname, "wb") as file:
+        pickle.dump(data, file, 2)  # type: ignore
 
 
 if __name__ == "__main__":
