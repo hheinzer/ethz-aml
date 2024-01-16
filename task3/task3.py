@@ -64,7 +64,7 @@ def load_data():
 def predict_boxes(train, test):
     size = 128
     model = UNet((1, 32, 64, 128, 256, 512), 1).to(device)
-    opti = optim.Adam(model.parameters(), lr=0.001, weight_decay=0.001)
+    opti = optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-3)
     loss_fn = nn.BCEWithLogitsLoss()
     trans = T.Compose(
         [
@@ -115,9 +115,9 @@ def compute_movement(dataset):
     size = 128
     movements = []
     for data in tqdm(dataset, "movement"):
-        video = preprocess(data["video"], size, device)
+        video = preprocess(data["video"], size, device).to(device)
         video /= video.max()
-        _, _, movement, _, _ = rnmf(video.to(device), 2, 0.1)
+        _, _, movement, _, _ = rnmf(video, 2, 0.1)
         movement = postprocess(movement, *data["shape"])
         movement /= movement.max()
         movements.append(movement)
@@ -125,14 +125,14 @@ def compute_movement(dataset):
 
 
 def predict_valves(train, test):
-    size = 256
-    n_features = 3
-    model = UNet((n_features, 64, 128, 256, 512, 1024), 1).to(device)
-    opti = optim.Adam(model.parameters(), lr=0.001, weight_decay=0.001)
+    size = 128
+    n_features = 1
+    model = UNet((n_features, 32, 64, 128, 256, 512), 1).to(device)
+    opti = optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-3)
     loss_fn = nn.BCEWithLogitsLoss()
     trans = T.Compose(
         [
-            RandomEraseFromLabel(radius=(0.03, 0.06), channels=[0, 2], p=0.75),
+            # RandomEraseFromLabel(radius=(0.03, 0.06), channels=[0, 2], p=0.75),
             T.RandomPerspective(distortion_scale=0.5),
             T.RandomAffine(degrees=10, translate=(0.1, 0.1), scale=(0.9, 1.1), shear=10),  # type: ignore
             T.ElasticTransform(alpha=50, sigma=10),
@@ -148,8 +148,8 @@ def predict_valves(train, test):
             frames = data["frames"]
             X = np.zeros((len(frames), n_features, H, W), dtype=np.float32)
             X[:, 0] = data["video"][frames] / 255.0
-            X[:, 1] = np.repeat(data["box"][np.newaxis], len(frames), axis=0)
-            X[:, 2] = data["movement"][frames]
+            # X[:, 1] = np.repeat(data["box"][np.newaxis], len(frames), axis=0)
+            # X[:, 2] = data["movement"][frames]
             if data["dataset"] == "amateur":
                 Xa.append(X)
                 Ya.append(data["label"][frames])
@@ -170,8 +170,8 @@ def predict_valves(train, test):
             n_frames = len(data["video"])
             X = np.zeros((n_frames, n_features, H, W), dtype=np.float32)
             X[:, 0] = data["video"] / 255.0
-            X[:, 1] = np.repeat(data["box"][np.newaxis], n_frames, axis=0)
-            X[:, 2] = data["movement"]
+            # X[:, 1] = np.repeat(data["box"][np.newaxis], n_frames, axis=0)
+            # X[:, 2] = data["movement"]
             X = preprocess(X, size, device)
             X = torch.split(X, 64)
             Y = [sigmoid(model(x.to(device))) for x in X]
@@ -185,9 +185,7 @@ def predict_valves(train, test):
     return raw_valves
 
 
-def train_model(
-    X, Y, model, opti, loss_fn, trans, size, batch_size, n_epochs, patience, prefix=None
-):
+def train_model(X, Y, model, opti, loss_fn, trans, size, batch_size, n_epochs, patience, prefix):
     X, Y = map(lambda xs: [preprocess(x, size, device) for x in xs], (X, Y))
 
     X0, X1, Y0, Y1 = train_test_split(X, Y)  # split over videos
@@ -195,6 +193,8 @@ def train_model(
 
     loader0 = DataLoader(EchoDataset(X0, Y0, trans), batch_size, shuffle=True)
     loader1 = DataLoader(EchoDataset(X1, Y1), batch_size, shuffle=True)
+
+    scheduler = torch.optim.lr_scheduler.MultiplicativeLR(opti, lambda _: 0.95)
 
     best_loss, counter = float("inf"), 0
     for epoch in range(n_epochs):
@@ -215,10 +215,11 @@ def train_model(
         valid_loss /= len(loader1)
         print(f"train_loss: {train_loss:.4f}, valid_loss: {valid_loss:.4f}")
 
-        if prefix is not None:
-            with torch.no_grad():
-                plot_intermediate(loader0, model, epoch, n_epochs, train_loss, prefix + "train")
-                plot_intermediate(loader1, model, epoch, n_epochs, valid_loss, prefix + "valid")
+        scheduler.step()
+
+        with torch.no_grad():
+            plot_intermediate(loader0, model, epoch, n_epochs, train_loss, prefix + "train")
+            plot_intermediate(loader1, model, epoch, n_epochs, valid_loss, prefix + "valid")
 
         if valid_loss < best_loss:
             best_loss = valid_loss
