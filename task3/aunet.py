@@ -59,7 +59,7 @@ class AttBlock(nn.Module):
             nn.BatchNorm2d(1),
             nn.Sigmoid(),
         )
-        self.relu = nn.ReLU()
+        self.relu = nn.ReLU(inplace=True)
 
     def forward(self, g, x):
         g1 = self.Wg(g)
