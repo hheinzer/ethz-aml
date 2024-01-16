@@ -14,7 +14,7 @@ from augment import RandomEraseFromLabel
 from checkpt import checkpoint
 from dataset import EchoDataset
 from explore import merge_pdfs, plot_frames, plot_intermediate
-from processing import postprocess, preprocess
+from process import postprocess, preprocess
 from rnmf import rnmf
 from unet import UNet
 from utils import load_pkl
@@ -144,12 +144,15 @@ def predict_valves(train, test):
     except:
         Xa, Ya, Xe, Ye = [], [], [], []
         for data in train:
-            H, W = data["shape"]
             frames = data["frames"]
-            X = np.zeros((len(frames), n_features, H, W), dtype=np.float32)
-            X[:, 0] = data["video"][frames] / 255.0
-            # X[:, 1] = np.repeat(data["box"][np.newaxis], len(frames), axis=0)
-            # X[:, 2] = data["movement"][frames]
+            X = np.stack(
+                (
+                    data["video"][frames],
+                    # np.repeat(data["box"][np.newaxis], len(frames), axis=0),
+                    # data["movement"][frames],
+                ),
+                axis=1,
+            )
             if data["dataset"] == "amateur":
                 Xa.append(X)
                 Ya.append(data["label"][frames])
@@ -166,12 +169,14 @@ def predict_valves(train, test):
     raw_valves = []
     with torch.no_grad():
         for data in tqdm(test, "eval"):
-            H, W = data["shape"]
-            n_frames = len(data["video"])
-            X = np.zeros((n_frames, n_features, H, W), dtype=np.float32)
-            X[:, 0] = data["video"] / 255.0
-            # X[:, 1] = np.repeat(data["box"][np.newaxis], n_frames, axis=0)
-            # X[:, 2] = data["movement"]
+            X = np.stack(
+                (
+                    data["video"],
+                    # np.repeat(data["box"][np.newaxis], len(data["video"]), axis=0),
+                    # data["movement"],
+                ),
+                axis=1,
+            )
             X = preprocess(X, size, device)
             X = torch.split(X, 64)
             Y = [sigmoid(model(x.to(device))) for x in X]
