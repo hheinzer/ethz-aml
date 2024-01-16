@@ -13,10 +13,12 @@ from tqdm import tqdm
 
 def plot_frames(prefix, train, test):
     os.makedirs(prefix, exist_ok=True)
+
     if train is not None:
         with mp.Pool(6) as pool:
             train = [(prefix + "/train", i, data) for i, data in enumerate(train)]
             list(tqdm(pool.imap(_plot_frames, train), "plot train", total=len(train)))
+
     if test is not None:
         with mp.Pool(6) as pool:
             test = [(prefix + "/test", i, data) for i, data in enumerate(test)]
@@ -60,10 +62,13 @@ def plot_intermediate(loader, model, epoch, n_epochs, loss, prefix):
     device = next(model.parameters()).device
     x, y = next(iter(loader))
     pred = sigmoid(model(x.to(device)))
-    fig, axs = plt.subplots(2, 4, num=1, clear=True, figsize=(10, 5))
+
     x, y, pred = map(lambda x: x.squeeze().cpu().numpy(), (x, y, pred))
+
     if x.ndim == 4:
         x = x[:, 0, :, :]
+
+    fig, axs = plt.subplots(2, 4, num=1, clear=True, figsize=(10, 5))
     for ax, xi, yi, pi in zip(axs.flatten(), x, y, pred):
         ax.imshow(xi, cmap="gray")
         ax.contour(yi, levels=[0.5], colors="tab:blue")

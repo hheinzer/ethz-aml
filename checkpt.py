@@ -9,7 +9,10 @@ def checkpoint(name, func, *args, **kwargs):
             return pickle.load(f)
     except:
         res = func(*args, **kwargs)
+
         os.makedirs(os.path.dirname(fname), exist_ok=True)
+
         with open(fname, "wb") as f:
             pickle.dump(res, f)
+
         return res

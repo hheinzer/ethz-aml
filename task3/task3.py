@@ -1,27 +1,22 @@
-import gzip
 import os
-import pickle
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torchvision.transforms.v2 as T
-import torchvision.transforms.v2.functional as F
+from augment import RandomEraseFromLabel
+from checkpt import checkpoint
+from dataset import EchoDataset
+from explore import merge_pdfs, plot_frames, plot_intermediate
+from processing import postprocess, preprocess
+from rnmf import rnmf
 from sklearn.model_selection import train_test_split
 from torch.nn.functional import sigmoid
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 from tqdm import tqdm
-
-try:
-    from torchvision.tv_tensors import Image, Mask  # 0.16.1 # pyright: ignore
-except:
-    from torchvision.datapoints import Image, Mask  # 0.15.2 # pyright: ignore
-
-from checkpt import checkpoint
-from explore import merge_pdfs, plot_frames, plot_intermediate
-from rnmf import rnmf
 from unet import UNet
+from utils import load_pkl
 
 device = torch.device(
     "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
@@ -49,7 +44,7 @@ def main():
     for data, valve in zip(test, valves):
         data["label"] = valve
 
-    plot_frames("frames", train, test)
+    plot_frames("frames", None, test)
 
 
 def load_data():
@@ -63,22 +58,6 @@ def load_data():
         data["shape"] = data["video"].shape[:2]
         data["video"] = np.moveaxis(data["video"], 2, 0)
     return train, test
-
-
-class EchoDataset(Dataset):
-    def __init__(self, X: torch.Tensor, Y: torch.Tensor, transform=None):
-        self.X = X
-        self.Y = Y
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.X)
-
-    def __getitem__(self, idx):
-        X, Y = self.X[idx], self.Y[idx]
-        if self.transform is not None:
-            return self.transform(Image(X), Mask(Y))
-        return X, Y
 
 
 def predict_boxes(train, test):
@@ -115,9 +94,9 @@ def predict_boxes(train, test):
     raw_boxes = []
     with torch.no_grad():
         for data in tqdm(test, "eval"):
-            X = preprocess(data["video"], size)
+            X = preprocess(data["video"], size, device)
             X = torch.split(X, 64)
-            Y = [sigmoid(model(x.to(device))).cpu() for x in X]
+            Y = [sigmoid(model(x.to(device))) for x in X]
             raw_boxes.append(postprocess(torch.cat(Y), *data["shape"]))
 
     boxes = []
@@ -135,40 +114,13 @@ def compute_movement(dataset):
     size = 128
     movements = []
     for data in tqdm(dataset, "movement"):
-        video = preprocess(data["video"], size)
+        video = preprocess(data["video"], size, device)
         video /= video.max()
         _, _, movement, _, _ = rnmf(video.to(device), 2, 0.1)
         movement = postprocess(movement, *data["shape"])
         movement /= movement.max()
         movements.append(movement)
     return movements
-
-
-class RandomEraseFromLabel(nn.Module):
-    def __init__(self, radius, channels=None, p=0.5):
-        super().__init__()
-        self.radius = radius
-        self.channels = channels
-        self.p = p
-
-    def forward(self, img, label):
-        if torch.rand(1) > self.p:
-            return img, label
-        _, H, W = label.shape
-        _, y, x = torch.argwhere(label).t()
-        i = torch.randint(len(y), (1,))
-        y, x = y[i], x[i]
-        r = torch.rand(1) * (self.radius[1] - self.radius[0]) + self.radius[0]
-        r = int(min(H, W) * r)
-        yy, xx = map(torch.from_numpy, np.ogrid[:H, :W])
-        mask = (yy - y) ** 2 + (xx - x) ** 2 <= r**2
-        new_img = img.clone()
-        if self.channels is None:
-            new_img[:, mask] = 0
-        else:
-            for c in self.channels:
-                new_img[c, mask] = 0
-        return new_img, label
 
 
 def predict_valves(train, test):
@@ -208,7 +160,7 @@ def predict_valves(train, test):
         train_model(Xa, Ya, model, opti, loss_fn, trans, size, 8, 100, 3, "valves/amateur_")
         train_model(Xe, Ye, model, opti, loss_fn, trans, size, 8, 100, 3, "valves/expert_")
         os.makedirs("models", exist_ok=True)
-        # torch.save(model.state_dict(), "models/valves.pt")
+        torch.save(model.state_dict(), "models/valves.pt")
 
     raw_valves = []
     with torch.no_grad():
@@ -219,9 +171,9 @@ def predict_valves(train, test):
             X[:, 0] = data["video"] / 255.0
             X[:, 1] = np.repeat(data["box"][np.newaxis], n_frames, axis=0)
             X[:, 2] = data["movement"]
-            X = preprocess(X, size)
+            X = preprocess(X, size, device)
             X = torch.split(X, 64)
-            Y = [sigmoid(model(x.to(device))).cpu() for x in X]
+            Y = [sigmoid(model(x.to(device))) for x in X]
             raw_valves.append(postprocess(torch.cat(Y), *data["shape"]))
 
     valves = []
@@ -235,7 +187,7 @@ def predict_valves(train, test):
 def train_model(
     X, Y, model, opti, loss_fn, trans, size, batch_size, n_epochs, patience, prefix=None
 ):
-    X, Y = map(lambda xs: [preprocess(x, size) for x in xs], (X, Y))
+    X, Y = map(lambda xs: [preprocess(x, size, device) for x in xs], (X, Y))
 
     X0, X1, Y0, Y1 = train_test_split(X, Y)  # split over videos
     X0, X1, Y0, Y1 = map(torch.cat, (X0, X1, Y0, Y1))
@@ -279,42 +231,6 @@ def train_model(
     if prefix is not None:
         merge_pdfs(prefix + "train")
         merge_pdfs(prefix + "valid")
-
-
-def preprocess(X, size):
-    H, W = X.shape[-2:]
-    X = torch.from_numpy(X).to(device)
-    if X.ndim == 3:
-        X = X.unsqueeze(1)
-    match X.dtype:
-        case torch.uint8:
-            X = X.float() / 255.0
-        case torch.bool:
-            X = X.float()
-        case torch.float:
-            pass
-        case _:
-            raise TypeError(f"unexpected dtype: {X.dtype}")
-    X = F.pad(X, [0, 0, max(0, H - W), max(0, W - H)])
-    X = F.resize(X, size, antialias=True)
-    return X.cpu()
-
-
-def postprocess(X: torch.Tensor, H, W):
-    X = F.resize(X.to(device), max(H, W), antialias=True)
-    X = F.crop(X, 0, 0, H, W)
-    X = X.squeeze().cpu().numpy()
-    return X
-
-
-def load_pkl(fname):
-    with gzip.open(fname, "rb") as file:
-        return pickle.load(file)  # type: ignore
-
-
-def save_pkl(fname, data):
-    with gzip.open(fname, "wb") as file:
-        pickle.dump(data, file, 2)  # type: ignore
 
 
 if __name__ == "__main__":
