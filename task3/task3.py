@@ -17,7 +17,7 @@ from explore import merge_pdfs, plot_frames, plot_intermediate
 from process import postprocess, preprocess
 from rnmf import rnmf
 from unet import UNet
-from utils import load_pkl
+from utils import load_pkl, save_pkl
 
 device = torch.device(
     "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
@@ -182,12 +182,9 @@ def predict_valves(train, test):
             Y = [sigmoid(model(x.to(device))) for x in X]
             raw_valves.append(postprocess(torch.cat(Y), *data["shape"]))
 
-    valves = []
-    for raw_valve in raw_valves:
-        valve = raw_valve > 0.5
-        valves.append(valve)
+    valves = [raw_valve > 0.5 for raw_valve in raw_valves]
 
-    return raw_valves
+    return valves
 
 
 def train_model(X, Y, model, opti, loss_fn, trans, size, batch_size, n_epochs, patience, prefix):
@@ -238,6 +235,17 @@ def train_model(X, Y, model, opti, loss_fn, trans, size, batch_size, n_epochs, p
     if prefix is not None:
         merge_pdfs(prefix + "train")
         merge_pdfs(prefix + "valid")
+
+
+def create_submission(test):
+    pred = [
+        {
+            "name": data["name"],
+            "prediction": np.moveaxis(data["label"], 0, 2),
+        }
+        for data in test
+    ]
+    save_pkl(pred, "submission.pkl")
 
 
 if __name__ == "__main__":
