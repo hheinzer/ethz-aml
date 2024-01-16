@@ -7,8 +7,6 @@ class UNet(nn.Module):
 
     def __init__(self, n_channels, n_classes):
         super().__init__()
-        self.n_channels = n_channels
-        self.n_classes = n_classes
         self.conv1 = DoubleConv(n_channels[0], n_channels[1])
         self.downs = nn.ModuleList(
             [Down(n_channels[i - 1], n_channels[i]) for i in range(2, len(n_channels))]
@@ -32,36 +30,34 @@ class UNet(nn.Module):
 class DoubleConv(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
-        self.bnorm = nn.BatchNorm2d(out_channels)
-        self.relu = nn.ReLU()
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(),
+        )
 
     def forward(self, x):
-        x = self.relu(self.bnorm(self.conv1(x)))
-        x = self.relu(self.bnorm(self.conv2(x)))
-        return x
+        return self.conv(x)
 
 
 class Down(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.pool = nn.MaxPool2d(2)
-        self.conv = DoubleConv(in_channels, out_channels)
+        self.down = nn.Sequential(
+            nn.MaxPool2d(2),
+            DoubleConv(in_channels, out_channels),
+        )
 
     def forward(self, x):
-        return self.conv(self.pool(x))
+        return self.down(x)
 
 
 class Up(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
-        self.in_channels = in_channels
-        self.out_channels = out_channels
         self.upconv = nn.ConvTranspose2d(in_channels, out_channels, kernel_size=2, stride=2)
         self.conv = DoubleConv(in_channels, out_channels)
 
