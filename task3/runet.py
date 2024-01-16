@@ -5,7 +5,7 @@ import torch.nn as nn
 class RUNet(nn.Module):
     """https://github.com/LeeJunHyun/Image_Segmentation"""
 
-    def __init__(self, n_channels, n_classes, n_rblocks=1, n_recursions=2):
+    def __init__(self, n_channels, n_classes, n_rblocks=2, n_recursions=2):
         super().__init__()
         self.conv1 = RConv(n_channels[0], n_channels[1], n_rblocks, n_recursions)
         self.downs = nn.ModuleList(
