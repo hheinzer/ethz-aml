@@ -10,13 +10,13 @@ from torch.nn.functional import sigmoid
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from augment import RandomEraseFromLabel
+from arunet import AttRUNet
+from augment import RandomEraseFromLabel, RandomErasing
 from checkpt import checkpoint
 from dataset import EchoDataset
 from explore import merge_pdfs, plot_frames, plot_intermediate
 from process import postprocess, preprocess
 from rnmf import rnmf
-from unet import UNet
 from utils import load_pkl, save_pkl
 
 device = torch.device(
@@ -63,14 +63,20 @@ def load_data():
 
 def predict_boxes(train, test):
     size = 128
-    model = UNet((1, 32, 64, 128, 256, 512), 1).to(device)
-    opti = optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-3)
+    model = AttRUNet((1, 32, 64, 128, 256, 512), 1).to(device)
+    opti = optim.Adam(model.parameters())
     loss_fn = nn.BCEWithLogitsLoss()
     trans = T.Compose(
         [
-            T.RandomPerspective(distortion_scale=0.5),
-            T.RandomAffine(degrees=10, translate=(0.1, 0.1), scale=(0.9, 1.1), shear=10),  # type: ignore
-            T.ElasticTransform(alpha=50, sigma=10),
+            RandomErasing(scale=(0.1, 0.2)),
+            T.RandomAffine(
+                degrees=(-15, 15),
+                translate=(0.1, 0.1),
+                scale=(0.9, 1.1),
+                shear=(-15, 15),
+                interpolation=T.InterpolationMode.BILINEAR,
+            ),
+            T.RandomPerspective(),
         ]
     )
 
@@ -87,8 +93,8 @@ def predict_boxes(train, test):
                 Ye.append(np.repeat(data["box"][np.newaxis], len(Xe[-1]), axis=0))
 
         os.makedirs("boxes", exist_ok=True)
-        train_model(Xa, Ya, model, opti, loss_fn, trans, size, 32, 100, 3, "boxes/amateur_")
-        train_model(Xe, Ye, model, opti, loss_fn, trans, size, 32, 100, 3, "boxes/expert_")
+        train_model(Xa, Ya, model, opti, loss_fn, trans, size, 16, 100, 3, "boxes/amateur_")
+        train_model(Xe, Ye, model, opti, loss_fn, trans, size, 16, 100, 3, "boxes/expert_")
         os.makedirs("models", exist_ok=True)
         torch.save(model.state_dict(), "models/boxes.pt")
 
@@ -126,16 +132,21 @@ def compute_movement(dataset):
 
 def predict_valves(train, test):
     size = 128
-    n_features = 1
-    model = UNet((n_features, 32, 64, 128, 256, 512), 1).to(device)
-    opti = optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-3)
+    n_features = 3
+    model = AttRUNet((n_features, 64, 128, 256, 512, 1024), 1).to(device)
+    opti = optim.Adam(model.parameters())
     loss_fn = nn.BCEWithLogitsLoss()
     trans = T.Compose(
         [
-            # RandomEraseFromLabel(radius=(0.03, 0.06), channels=[0, 2], p=0.75),
-            T.RandomPerspective(distortion_scale=0.5),
-            T.RandomAffine(degrees=10, translate=(0.1, 0.1), scale=(0.9, 1.1), shear=10),  # type: ignore
-            T.ElasticTransform(alpha=50, sigma=10),
+            RandomEraseFromLabel(radius=(0.02, 0.04), channels=(0, 2), p=0.9),
+            T.RandomAffine(
+                degrees=(-15, 15),
+                translate=(0.1, 0.1),
+                scale=(0.9, 1.1),
+                shear=(-15, 15),
+                interpolation=T.InterpolationMode.BILINEAR,
+            ),
+            T.RandomPerspective(),
         ]
     )
 
@@ -148,8 +159,8 @@ def predict_valves(train, test):
             X = np.stack(
                 (
                     data["video"][frames],
-                    # np.repeat(data["box"][np.newaxis], len(frames), axis=0),
-                    # data["movement"][frames],
+                    np.repeat(data["box"][np.newaxis], len(frames), axis=0),
+                    data["movement"][frames],
                 ),
                 axis=1,
             )
@@ -161,8 +172,8 @@ def predict_valves(train, test):
                 Ye.append(data["label"][frames])
 
         os.makedirs("valves", exist_ok=True)
-        train_model(Xa, Ya, model, opti, loss_fn, trans, size, 8, 100, 3, "valves/amateur_")
-        train_model(Xe, Ye, model, opti, loss_fn, trans, size, 8, 100, 3, "valves/expert_")
+        train_model(Xa, Ya, model, opti, loss_fn, trans, size, 8, 100, 5, "valves/amateur_")
+        train_model(Xe, Ye, model, opti, loss_fn, trans, size, 8, 100, 5, "valves/expert_")
         os.makedirs("models", exist_ok=True)
         torch.save(model.state_dict(), "models/valves.pt")
 
@@ -172,8 +183,8 @@ def predict_valves(train, test):
             X = np.stack(
                 (
                     data["video"],
-                    # np.repeat(data["box"][np.newaxis], len(data["video"]), axis=0),
-                    # data["movement"],
+                    np.repeat(data["box"][np.newaxis], len(data["video"]), axis=0),
+                    data["movement"],
                 ),
                 axis=1,
             )
@@ -196,8 +207,6 @@ def train_model(X, Y, model, opti, loss_fn, trans, size, batch_size, n_epochs, p
     loader0 = DataLoader(EchoDataset(X0, Y0, trans), batch_size, shuffle=True)
     loader1 = DataLoader(EchoDataset(X1, Y1), batch_size, shuffle=True)
 
-    scheduler = torch.optim.lr_scheduler.MultiplicativeLR(opti, lambda _: 0.95)
-
     best_loss, counter = float("inf"), 0
     for epoch in range(n_epochs):
         train_loss = 0
@@ -216,8 +225,6 @@ def train_model(X, Y, model, opti, loss_fn, trans, size, batch_size, n_epochs, p
                 valid_loss += loss_fn(model(x.to(device)), y.to(device)).item()
         valid_loss /= len(loader1)
         print(f"train_loss: {train_loss:.4f}, valid_loss: {valid_loss:.4f}")
-
-        scheduler.step()
 
         with torch.no_grad():
             plot_intermediate(loader0, model, epoch, n_epochs, train_loss, prefix + "train")
