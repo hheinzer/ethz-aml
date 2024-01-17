@@ -50,6 +50,7 @@ class RConv(nn.Module):
 
 class RBlock(nn.Module):
     def __init__(self, out_channels, n_recursions):
+        super().__init__()
         self.n_recursions = n_recursions
         self.conv = nn.Sequential(
             nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
