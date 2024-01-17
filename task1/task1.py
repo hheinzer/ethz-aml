@@ -52,7 +52,7 @@ def remove_outliers(X_train, y_test, X_test):
         preprocessing.RobustScaler(),
         impute.SimpleImputer(strategy="median"),
         decomposition.PCA(n_components=2),
-        ensemble.IsolationForest(contamination=0.045),
+        ensemble.IsolationForest(contamination=0.045),  # type: ignore
     )
     pred = model.fit_predict(X_train)
     plot_outliers(model[:3].transform(X_train), model[:3].transform(X_test), pred)
