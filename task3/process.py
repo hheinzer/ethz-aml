@@ -15,8 +15,7 @@ def preprocess(X, size, device):
             X = X.float() / 255.0
         case torch.bool:
             X = X.float()
-        case torch.double:
-            X = X.float()
+        case torch.float:
             X[:, 0] /= 255.0
         case _:
             raise TypeError(f"unexpected dtype: {X.dtype}")
