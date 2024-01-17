@@ -1,11 +1,10 @@
 import torch
 import torch.nn as nn
-
 from aunet import AttBlock
 from runet import RConv, RDown
 
 
-class RUNet(nn.Module):
+class AttRUNet(nn.Module):
     """https://github.com/LeeJunHyun/Image_Segmentation"""
 
     def __init__(self, n_channels, n_classes, n_rblocks=2, n_recursions=2):
