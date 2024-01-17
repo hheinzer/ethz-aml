@@ -1,6 +1,16 @@
 import numpy as np
 import torch
 import torch.nn as nn
+import torchvision.transforms.v2 as T
+
+
+class RandomErasing(nn.Module):
+    def __init__(self, p=0.5, scale=(0.02, 0.33), ratio=(0.3, 3.3), value=0, inplace=False):
+        super().__init__()
+        self.erase = T.RandomErasing(p, scale, ratio, value, inplace)
+
+    def forward(self, img, label):
+        return self.erase(img), label
 
 
 class RandomEraseFromLabel(nn.Module):
