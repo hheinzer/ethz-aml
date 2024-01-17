@@ -5,19 +5,19 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torchvision.transforms.v2 as T
-from sklearn.model_selection import train_test_split
-from torch.nn.functional import sigmoid
-from torch.utils.data import DataLoader
-from tqdm import tqdm
-
 from arunet import AttRUNet
 from augment import RandomEraseFromLabel, RandomErasing
-from checkpt import checkpoint
 from dataset import EchoDataset
 from explore import merge_pdfs, plot_frames, plot_intermediate
 from process import postprocess, preprocess
 from rnmf import rnmf
+from sklearn.model_selection import train_test_split
+from torch.nn.functional import sigmoid
+from torch.utils.data import DataLoader
+from tqdm import tqdm
 from utils import load_pkl, save_pkl
+
+from checkpt import checkpoint
 
 device = torch.device(
     "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
@@ -81,7 +81,7 @@ def predict_boxes(train, test):
     )
 
     try:
-        model.load_state_dict(torch.load("models/boxes.pt"))
+        model.load_state_dict(torch.load("models/boxes.pth"))
     except:
         Xa, Ya, Xe, Ye = [], [], [], []
         for data in train:
@@ -96,7 +96,7 @@ def predict_boxes(train, test):
         train_model(Xa, Ya, model, opti, loss_fn, trans, size, 16, 100, 3, "boxes/amateur_")
         train_model(Xe, Ye, model, opti, loss_fn, trans, size, 16, 100, 3, "boxes/expert_")
         os.makedirs("models", exist_ok=True)
-        torch.save(model.state_dict(), "models/boxes.pt")
+        torch.save(model.state_dict(), "models/boxes.pth")
 
     raw_boxes = []
     with torch.no_grad():
@@ -151,7 +151,7 @@ def predict_valves(train, test):
     )
 
     try:
-        model.load_state_dict(torch.load("models/valves.pt"))
+        model.load_state_dict(torch.load("models/valves.pth"))
     except:
         Xa, Ya, Xe, Ye = [], [], [], []
         for data in train:
@@ -175,7 +175,7 @@ def predict_valves(train, test):
         train_model(Xa, Ya, model, opti, loss_fn, trans, size, 8, 100, 5, "valves/amateur_")
         train_model(Xe, Ye, model, opti, loss_fn, trans, size, 8, 100, 5, "valves/expert_")
         os.makedirs("models", exist_ok=True)
-        torch.save(model.state_dict(), "models/valves.pt")
+        torch.save(model.state_dict(), "models/valves.pth")
 
     raw_valves = []
     with torch.no_grad():

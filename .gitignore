@@ -1,5 +1,5 @@
 data/
 *.csv
 *.pdf
-*.pt
+*.pth
 
