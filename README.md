@@ -80,4 +80,4 @@ Codes for the 2023 ETH Zürich course [Advanced Machine Learning](https://ml2.in
     - rescale to original size and remove padding
     - move frame axis back to the rear
 
-<p align="center"> <img src="img/echo.png" /> </p>
+<p align="center"> <img src="img/echo.gif" /> </p>
